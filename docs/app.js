@@ -7,7 +7,7 @@
   var ROLE = Core.ROLES;
   var STATUS = Core.ROOM_STATUS;
 
-  var S = { user: null, db: null, ver: '', tab: '', sel: {}, pick: {}, round: 'morning', floorTab: null, seen: null, busy: false, offline: false };
+  var S = { user: null, db: null, tab: '', sel: {}, pick: {}, round: 'morning', floorTab: null, seen: null, busy: false, offline: false };
   var F = null; // สถานะฟอร์มตรวจที่เปิดอยู่
 
   // ---------- ตัวช่วย ----------
@@ -47,10 +47,7 @@
 
   // ---------- งานของฉัน ----------
   function myTasks() {
-    var t = Core.tasksFor(S.db, S.user);
-    var fl = floorsOf(S.user);
-    if (S.user.role === 'maid' && fl.length) t = t.filter(function (x) { return fl.indexOf(x.floor) >= 0; });
-    return t;
+    return Core.tasksFor(S.db, S.user); // แม่บ้านได้เฉพาะชั้นตัวเอง (กรองใน Core แล้ว)
   }
   function taskKey(t) { return t.kind + '|' + t.roomId + '|' + t.inspectionId + '|' + t.step + '|' + t.since; }
   function canBulk() { return S.user.role === 'head_maid' || S.user.role === 'reception'; }
@@ -140,6 +137,7 @@
     var tabs = tabsFor(S.user.role);
     if (!tabs.some(function (t) { return t.id === S.tab; })) S.tab = tabs[0].id;
     var tasks = S.user.role === 'admin' ? [] : myTasks();
+    var noFloor = S.user.role === 'maid' && !floorsOf(S.user).length;
     var demo = '';
     if (!Api.isLive) {
       demo = '<div class="demo-bar"><b>โหมดทดลอง</b><label>สลับบทบาท <select data-change="switchUser">' + Api.demoUsers().map(function (u) {
@@ -157,7 +155,9 @@
       var b = t.id === 'tasks' && tasks.length ? '<span class="badge">' + tasks.length + '</span>' : '';
       return '<button data-act="tab" data-tab="' + t.id + '"' + (t.id === S.tab ? ' aria-current="page"' : '') + '>' + h(t.label) + b + '</button>';
     }).join('') + '</nav>';
-    var view = { tasks: tasksView, routine: routineView, rooms: roomsView, overview: overviewView, issues: issuesView, history: historyView }[S.tab](tasks);
+    var view = noFloor
+      ? '<h1 class="page-h">ยังไม่ได้กำหนดชั้น</h1>' + emptyHtml('บัญชีนี้ยังไม่มีชั้นที่รับผิดชอบ', 'แจ้งผู้ดูแลระบบให้ใส่เลขชั้นในชีต Users (คอลัมน์ floors)')
+      : { tasks: tasksView, routine: routineView, rooms: roomsView, overview: overviewView, issues: issuesView, history: historyView }[S.tab](tasks);
     $('app').innerHTML = demo + top + nav + '<main class="main">' + view + '</main>' + extraBar(tasks);
     document.title = (tasks.length ? '(' + tasks.length + ') ' : '') + 'ตรวจห้องพัก';
     window.scrollTo(0, y);
@@ -227,13 +227,15 @@
   function tasksView() {
     var st = tabState();
     var head = '<h1 class="page-h">' + (S.user.role === 'maid' ? 'งานของฉัน' : S.user.role === 'reception' ? 'รอตรวจขั้นสุดท้าย' : 'รอตรวจโดยหัวหน้าแม่บ้าน') + '</h1>';
-    var extra = st.mine.length && S.user.role === 'maid' ? '<p class="sub">ชั้นที่รับผิดชอบ: ' + st.mine.join(', ') + ' (ป้ายแท็บขอบเข้ม)</p>' : '';
+    var oneFloor = S.user.role === 'maid' && st.floors.length < 2;
+    var extra = st.mine.length && S.user.role === 'maid' ? '<p class="sub">ชั้นที่รับผิดชอบ: ' + st.mine.join(', ') + (oneFloor ? '' : ' (ป้ายแท็บขอบเข้ม)') + '</p>' : '';
     var strip = '<div class="ftabs" role="tablist" aria-label="เลือกชั้น">' + ['all'].concat(st.floors).map(function (f) {
       var n = f === 'all' ? st.all.length : st.all.filter(function (t) { return t.floor === f; }).length;
       var mine = f !== 'all' && st.mine.indexOf(f) >= 0 && S.user.role === 'maid';
       return '<button role="tab" class="' + (mine ? 'mine' : '') + '" data-act="floorTab" data-floor="' + f + '" aria-selected="' + (st.tab === f) + '">' +
         (f === 'all' ? 'ทั้งหมด' : 'ชั้น ' + f) + (n ? '<span class="n">' + n + '</span>' : '') + '</button>';
     }).join('') + '</div>';
+    if (oneFloor) strip = '';
     if (!st.list.length) {
       var hint = S.user.role === 'reception' ? 'ห้องที่หัวหน้าแม่บ้านตรวจผ่านแล้วจะขึ้นที่นี่' : S.user.role === 'head_maid' ? 'ห้องที่แม่บ้านตรวจผ่านแล้วจะขึ้นที่นี่' : 'ห้องที่เช็กเอาท์หรือถูกส่งกลับให้แก้ไขจะขึ้นที่นี่';
       return head + extra + strip + emptyHtml(st.tab === 'all' ? 'ไม่มีห้องรอคุณตอนนี้' : 'ชั้น ' + st.tab + ' ไม่มีห้องรอ', hint);
@@ -429,8 +431,20 @@
         toast(res.message || 'ทำรายการไม่สำเร็จ', 'bad');
         if (F) { closeSheet(); }
       }
-      return refresh(false);
+      return after(res);
     });
+  }
+  // หลังส่งคำสั่ง: ถ้าแสดงผลทันทีจากข้อมูลในเครื่องแล้ว แค่วาดหน้าใหม่ (เซิร์ฟเวอร์ยืนยันเบื้องหลัง) ไม่ต้องโหลดซ้ำ
+  function after(res) {
+    if (res && res.ok && res.optimistic) { syncSeen(); render(); return Promise.resolve(); }
+    return refresh(false);
+  }
+  // จำงานที่เห็นแล้ว กันเสียงเตือนเด้งจากสิ่งที่เราเพิ่งทำเอง
+  function syncSeen() {
+    if (!S.user || !S.db || S.user.role === 'admin') return;
+    var keys = {}; myTasks().forEach(function (t) { keys[taskKey(t)] = t; });
+    S.seen = {}; Object.keys(keys).forEach(function (k) { S.seen[k] = 1; });
+    Object.keys(S.sel).forEach(function (id) { if (!Object.keys(keys).some(function (k) { return keys[k].inspectionId === id; })) delete S.sel[id]; });
   }
 
   // ---------- โหลดข้อมูล / แจ้งงานใหม่ ----------
@@ -442,7 +456,7 @@
       }
       S.offline = !!r.offline;
       if (r.db) S.db = r.db;
-      if (r.ok) { S.user = r.user || S.user; S.ver = r.ver; }
+      if (r.ok) { S.user = r.user || S.user; }
       if (!S.user || !S.db) { render(); return; }
       if (S.user.role !== 'admin') {
         var keys = {}; myTasks().forEach(function (t) { keys[taskKey(t)] = t; });
@@ -461,13 +475,13 @@
     });
   }
   function tick() {
-    if (!S.user || document.hidden || !Api.isLive) return;
+    if (!S.user || document.hidden || !Api.isLive || Api.busy()) return;
     Api.flush().then(function (f) {
       if (f.dropped.length) toast(f.dropped[0], 'bad');
       return Api.ping();
     }).then(function (p) {
       if (p && p.offline) { if (!S.offline) { S.offline = true; render(); } return; }
-      if (p && (p.ver !== S.ver || S.offline || Api.pending() === 0 && S.pendingShown)) return refresh(true);
+      if (p && !Api.busy() && (p.ver !== Api.version() || S.offline)) return refresh(true);
     });
   }
   function doLogout() {
@@ -524,7 +538,7 @@
     checkin: function (el) {
       var room = el.dataset.room;
       Api.act('checkin', { roomId: room }).then(function (res) {
-        if (res.ok) { closeSheet(); toast('ห้อง ' + room + ' แขกเช็กอินแล้ว'); return refresh(false); }
+        if (res.ok) { closeSheet(); toast('ห้อง ' + room + ' แขกเช็กอินแล้ว'); return after(res); }
         if (res.code === 'NEEDS_CONFIRM') {
           return ask(res.message, 'ให้เข้าพักเลย', true).then(function (y) {
             if (!y) return;
@@ -576,6 +590,13 @@
   document.addEventListener('pointerdown', function () { try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (er) { /* ignore */ } }, { once: true });
   window.addEventListener('online', function () { tick(); });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) tick(); });
+
+  // ---------- ผลที่ตามมาทีหลังการส่งเบื้องหลัง ----------
+  Api.onEvent = function (type, data) {
+    if (type === 'auth') { toast(data.message, 'bad'); doLogout(); return; }
+    if (type === 'queued') { toast('สัญญาณหลุด เก็บไว้ในเครื่องแล้ว จะส่งให้อัตโนมัติเมื่อมีสัญญาณ', 'new'); if (S.user && S.db) render(); return; }
+    if (type === 'reject') { toast((data && data.message) || 'ทำรายการไม่สำเร็จ', 'bad'); refresh(false); }
+  };
 
   // ---------- เริ่มทำงาน ----------
   Api.init();
