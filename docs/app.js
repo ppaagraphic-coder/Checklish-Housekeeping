@@ -594,7 +594,7 @@
   // ---------- ผลที่ตามมาทีหลังการส่งเบื้องหลัง ----------
   Api.onEvent = function (type, data) {
     if (type === 'auth') { toast(data.message, 'bad'); doLogout(); return; }
-    if (type === 'queued') { toast('สัญญาณหลุด เก็บไว้ในเครื่องแล้ว จะส่งให้อัตโนมัติเมื่อมีสัญญาณ', 'new'); if (S.user && S.db) render(); return; }
+    if (type === 'queued') { toast('ส่งไม่สำเร็จ เก็บไว้ในเครื่องแล้ว จะส่งให้อัตโนมัติ', 'new'); if (S.user && S.db) render(); return; }
     if (type === 'reject') { toast((data && data.message) || 'ทำรายการไม่สำเร็จ', 'bad'); refresh(false); }
   };
 
@@ -602,6 +602,17 @@
   Api.init();
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) navigator.serviceWorker.register('sw.js').catch(function () { /* ใช้ต่อได้ */ });
   var u = Api.currentUser();
-  if (Api.isLive && u) { S.user = u; refresh(false); } else if (Api.isLive) { renderLogin(); } else { Api.state().then(function () { renderLogin(); }); }
-  setInterval(tick, POLL);
+  if (Api.isLive && u) {
+    S.user = u;
+    var cd = Api.cachedDb();
+    if (cd) { S.db = cd; syncSeen(); render(); } // โชว์ข้อมูลล่าสุดที่จำไว้ทันที แล้วค่อยอัปเดต
+    refresh(false);
+  } else if (Api.isLive) { renderLogin(); } else { Api.state().then(function () { renderLogin(); }); }
+  // ตรวจงานใหม่: ใช้งานอยู่เช็กถี่ (POLL) ไม่ได้แตะจอเกิน 3 นาทีเช็กห่างเป็น 30 วินาที (ประหยัดโควตา Apps Script)
+  var lastTouch = Date.now();
+  ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) { document.addEventListener(ev, function () { lastTouch = Date.now(); }, { passive: true }); });
+  (function loop() {
+    var idle = Date.now() - lastTouch > 180000;
+    setTimeout(function () { tick(); loop(); }, idle ? 30000 : POLL);
+  })();
 })();

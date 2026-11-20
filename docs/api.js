@@ -7,13 +7,16 @@ var Api = (function () {
   'use strict';
   var cfg = window.APP_CONFIG || {};
   var live = /^https?:\/\//.test(cfg.API_URL || '');
-  var K = { token: 'rc_token', user: 'rc_user', queue: 'rc_queue', demo: 'rc_demo', last: 'rc_lastuser' };
+  var K = { token: 'rc_token', user: 'rc_user', queue: 'rc_queue', demo: 'rc_demo', last: 'rc_lastuser', db: 'rc_db' };
   var cache = null;      // { db, user, ver } ล่าสุด (ใช้ตอนออฟไลน์/โหมดทดลอง)
   var queue = [];
   var token = '';
   var user = null;
   var ver = '';          // เลขเวอร์ชันข้อมูลล่าสุดที่หน้าจอนี้รู้
-  var chain = Promise.resolve(); // คิวส่งคำสั่งไปเซิร์ฟเวอร์ทีละคำสั่งตามลำดับ (กดไวแค่ไหนลำดับก็ไม่สลับ)
+  var outbox = [];       // คำสั่งที่แสดงผลบนหน้าจอแล้วแต่ยังไม่ได้ส่ง (รวมส่งเป็นชุดเดียวเพื่อประหยัดเวลา)
+  var draining = null;   // promise ขณะกำลังส่ง outbox (ส่งทีละชุดตามลำดับ กดไวแค่ไหนลำดับก็ไม่สลับ)
+  var MAX_BATCH = 30;    // ต้องไม่เกิน MAX_BATCH ใน Code.gs
+  var batchOk = true;    // เซิร์ฟเวอร์รองรับ action 'batch' หรือไม่ (ถ้ายังเป็นเวอร์ชันเก่าจะถอยไปส่งทีละคำสั่ง)
   var inflight = 0;      // จำนวนคำสั่งที่แสดงผลแล้วแต่ยังส่งไม่เสร็จ
   var primed = null;     // ข้อมูลที่ได้มาพร้อมการเข้าสู่ระบบ (ไม่ต้องโหลดซ้ำ)
 
@@ -37,19 +40,79 @@ var Api = (function () {
   function pushQueue(item) { queue.push(item); saveQueue(); }
 
   // ส่งคำสั่งที่แสดงผลบนหน้าจอไปแล้ว (optimistic) ไปเซิร์ฟเวอร์เบื้องหลัง
+  // คำสั่งที่รออยู่ในขณะที่ชุดก่อนหน้ายังส่งไม่เสร็จ จะถูกรวมเป็นชุดเดียว (action 'batch') เซิร์ฟเวอร์ล็อก/อ่าน/เขียนชีตครั้งเดียว
+  // BUSY = ชนล็อกกับคนอื่น, ERROR = ระบบขัดข้องชั่วคราว → ไม่ใช่การปฏิเสธตามกฎ ให้ลองส่งซ้ำ (opId เดิม ส่งซ้ำปลอดภัย)
+  var TRANSIENT = { BUSY: 1, ERROR: 1 };
+  function wait(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+  function idle() { return draining || Promise.resolve(); } // รอให้ทุกอย่างที่ส่งค้างอยู่เสร็จ
+
+  function reqFor(items) {
+    if (items.length === 1) return { action: items[0].action, payload: items[0].payload, opId: items[0].opId, token: token };
+    return {
+      action: 'batch', token: token,
+      ops: items.map(function (i) { return { opId: i.opId, action: i.action, payload: i.payload }; })
+    };
+  }
+  // แปลงคำตอบของเซิร์ฟเวอร์เป็นผลรายคำสั่ง (null = ทั้งชุดยังไม่สำเร็จ ต้องดู r.code)
+  function perItem(items, r) {
+    if (!r.ok) return null;
+    if (items.length === 1) return [r];
+    return r.results || null;
+  }
+
+  function attempt(items, n) {
+    return call(reqFor(items)).then(function (r) {
+      var done = items.length;
+      if (r.code === 'UNKNOWN' && items.length > 1 && batchOk) {
+        // เซิร์ฟเวอร์ยังเป็นเวอร์ชันเก่า (ไม่รู้จัก batch) → ส่งทีละคำสั่งแทน
+        batchOk = false;
+        return sendEach(items);
+      }
+      var rs = perItem(items, r);
+      if (rs) {
+        inflight -= done;
+        if (r.prev && r.prev === ver && r.ver) ver = r.ver;
+        var bad = null;
+        rs.forEach(function (x) { if (!x.ok && !bad) bad = x; });
+        if (bad) emit('reject', bad); // เซิร์ฟเวอร์ปฏิเสธบางคำสั่งตามกฎ (เช่น มีคนทำไปก่อน) → โหลดข้อมูลจริงมาแทน
+        return;
+      }
+      if (r.code === 'AUTH') { inflight -= done; items.forEach(pushQueue); emit('auth', r); return; }
+      if (TRANSIENT[r.code]) {
+        if (n < 3) return wait(1500 * (n + 1)).then(function () { return attempt(items, n + 1); });
+        inflight -= done; items.forEach(pushQueue); emit('queued', {}); return; // ลองครบแล้ว เก็บไว้ส่งทีหลัง ไม่ย้อนหน้าจอ
+      }
+      inflight -= done;
+      emit('reject', r);
+    }, function () {
+      inflight -= items.length; items.forEach(pushQueue); emit('queued', {});
+    });
+  }
+  function sendEach(items) {
+    var p = Promise.resolve();
+    items.forEach(function (it) { p = p.then(function () { return attempt([it], 0); }); });
+    return p;
+  }
+  function sendBatch(items) {
+    if (queue.length) { // มีคิวค้างอยู่ ต้องต่อท้ายเพื่อรักษาลำดับ
+      inflight -= items.length; items.forEach(pushQueue); return Promise.resolve();
+    }
+    return batchOk || items.length === 1 ? attempt(items, 0) : sendEach(items);
+  }
+  function drain() {
+    if (draining) return draining;
+    function loop() {
+      if (!outbox.length) { draining = null; return Promise.resolve(); }
+      var items = outbox.splice(0, MAX_BATCH);
+      return sendBatch(items).catch(function () { /* ไม่ให้คิวพัง */ }).then(loop);
+    }
+    draining = Promise.resolve().then(loop); // เริ่มรอบถัดไปของ event loop เพื่อให้คำสั่งที่กดติดกันมารวมชุดเดียวกัน
+    return draining;
+  }
   function sendBackground(item) {
     inflight++;
-    chain = chain.then(function () {
-      if (queue.length) { pushQueue(item); inflight--; return; } // มีคิวออฟไลน์ค้างอยู่ ต้องต่อท้ายเพื่อรักษาลำดับ
-      return call({ action: item.action, payload: item.payload, opId: item.opId, token: token }).then(function (r) {
-        inflight--;
-        if (r.ok) { if (r.prev && r.prev === ver && r.ver) ver = r.ver; return; }
-        if (r.code === 'AUTH') { pushQueue(item); emit('auth', r); return; }
-        emit('reject', r); // เซิร์ฟเวอร์ปฏิเสธ (เช่น มีคนทำไปก่อน) → หน้าจอจะโหลดข้อมูลจริงมาแทน
-      }, function () {
-        inflight--; pushQueue(item); emit('queued', {});
-      });
-    }).catch(function () { /* ไม่ให้คิวพัง */ });
+    outbox.push(item);
+    drain();
   }
 
   function replayQueue(db) {
@@ -109,7 +172,7 @@ var Api = (function () {
     },
     logout: function () {
       token = ''; user = null;
-      lsDel(K.token); lsDel(K.user);
+      lsDel(K.token); lsDel(K.user); lsDel(K.db);
     },
 
     // คืน { ok, db, user, ver } หรือ { ok:false, offline:true, db } ถ้าเชื่อมต่อไม่ได้
@@ -122,15 +185,27 @@ var Api = (function () {
           cache = { db: r.db, ver: r.ver };
           ver = r.ver;
           user = r.user; lsSet(K.user, JSON.stringify(user));
+          lsSet(K.db, JSON.stringify({ uid: user.id, db: r.db })); // ไว้โชว์ทันทีตอนเปิดแอปครั้งหน้า
         }
         return r;
       }
       if (primed) { var p = primed; primed = null; return Promise.resolve(take(p)); }
       // รอให้คำสั่งที่ส่งค้างอยู่เสร็จก่อน ไม่งั้นข้อมูลที่โหลดมาจะย้อนกลับไปเป็นของเก่า
-      return chain.then(function () { return call({ action: 'state', token: token }); }).then(take,
+      return idle().then(function () { return call({ action: 'state', token: token }); }).then(take,
         function () { return { ok: false, offline: true, db: cache && cache.db }; });
     },
     version: function () { return ver; },
+    // ข้อมูลล่าสุดที่จำไว้ในเครื่อง (ของผู้ใช้คนเดียวกัน) ใช้โชว์หน้าจอทันทีตอนเปิดแอป ระหว่างรอข้อมูลใหม่
+    cachedDb: function () {
+      if (!live || !user) return null;
+      try {
+        var d = JSON.parse(lsGet(K.db) || 'null');
+        if (!d || d.uid !== user.id || !d.db || !d.db.rooms) return null;
+        replayQueue(d.db);
+        cache = { db: d.db, ver: '' };
+        return d.db;
+      } catch (e) { return null; }
+    },
     busy: function () { return inflight > 0; },
 
     ping: function () {
@@ -161,7 +236,7 @@ var Api = (function () {
         if (local.code === 'NEEDS_CONFIRM') return Promise.resolve({ ok: false, code: local.code, message: local.message });
       }
       // ไม่ผ่านกฎในเครื่อง → ให้เซิร์ฟเวอร์ตัดสิน (ข้อมูลในเครื่องอาจเก่า) หลังคำสั่งก่อนหน้าส่งเสร็จ
-      return chain.then(function () {
+      return idle().then(function () {
         return call({ action: action, payload: payload, opId: item.opId, token: token });
       }).then(function (r) {
         if (r.ok && r.prev && r.prev === ver && r.ver) ver = r.ver;
@@ -169,21 +244,35 @@ var Api = (function () {
       }, function () { return enqueue(item); });
     },
 
-    // ส่งคิวที่ค้าง → { sent, dropped:[ข้อความ] }
+    // ส่งคิวที่ค้าง → { sent, dropped:[ข้อความ] } (ส่งเป็นชุด ชุดละไม่เกิน MAX_BATCH)
     flush: function () {
       var res = { sent: 0, dropped: [] };
       if (!live || !queue.length) return Promise.resolve(res);
-      function next() {
+      function next(size) {
         if (!queue.length) return Promise.resolve(res);
-        var q = queue[0];
-        return call({ action: q.action, payload: q.payload, opId: q.opId, token: token }).then(function (r) {
-          if (r.code === 'AUTH') return res; // รอเข้าสู่ระบบใหม่ ไม่ทิ้งคิว
+        if (!batchOk) size = 1;
+        var items = queue.slice(0, size);
+        return call(reqFor(items)).then(function (r) {
+          if (r.code === 'UNKNOWN' && items.length > 1) { batchOk = false; return next(1); } // เซิร์ฟเวอร์เวอร์ชันเก่า
+          if (r.code === 'AUTH' || r.code === 'BUSY') return res; // รอเข้าสู่ระบบใหม่/รอล็อกว่าง ไม่ทิ้งคิว
+          var rs = perItem(items, r);
+          if (rs) {
+            queue.splice(0, items.length); saveQueue();
+            rs.forEach(function (x) { if (x.ok) res.sent++; else res.dropped.push(x.message || 'ส่งรายการไม่สำเร็จ'); });
+            return next(MAX_BATCH);
+          }
+          if (r.code === 'ERROR') {
+            if (items.length > 1) return next(1); // แยกส่งทีละคำสั่ง จะได้รู้ว่าตัวไหนเป็นปัญหา
+            var q = items[0];
+            q.tries = (q.tries || 0) + 1;
+            if (q.tries < 5) { saveQueue(); return res; }
+          }
           queue.shift(); saveQueue();
-          if (r.ok) res.sent++; else res.dropped.push(r.message || 'ส่งรายการไม่สำเร็จ');
-          return next();
+          res.dropped.push(r.message || 'ส่งรายการไม่สำเร็จ');
+          return next(MAX_BATCH);
         }, function () { return res; });
       }
-      return next();
+      return next(MAX_BATCH);
     }
   };
 

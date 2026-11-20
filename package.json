@@ -3,7 +3,7 @@
   "private": true,
   "description": "ระบบตรวจห้องพัก (เอกสารภายใน)",
   "scripts": {
-    "test": "node --test test/core.test.js",
+    "test": "node --test \"test/*.test.js\"",
     "sync": "node tools/sync-core.js"
   }
 }

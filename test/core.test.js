@@ -52,11 +52,11 @@ test('วงจรเต็ม: เช็กอิน → เช็กเอา�
   assert.equal(room(db, '203').status, 'occupied');
   ok('front', 'checkout', { roomId: '203' });
   assert.equal(room(db, '203').status, 'dirty');
-  const r = ok('maid01', 'cleaned', { roomId: '203', idSeed: 'abc123' });
+  const r = ok('maid02', 'cleaned', { roomId: '203', idSeed: 'abc123' });
   assert.equal(r.result.inspectionId, 'I-203-abc123');
   assert.equal(room(db, '203').status, 'inspecting');
   const id = active(db, '203').id;
-  ok('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [] });
+  ok('maid02', 'submitStep', { inspectionId: id, step: 1, failures: [] });
   assert.equal(active(db, '203').step, 2);
   ok('head', 'submitStep', { inspectionId: id, step: 2, failures: [] });
   assert.equal(active(db, '203').step, 3);
@@ -65,7 +65,7 @@ test('วงจรเต็ม: เช็กอิน → เช็กเอา�
   assert.equal(room(db, '203').status, 'ready');
   assert.equal(active(db, '203'), null);
   assert.equal(Core.inspOf(db, id).status, 'passed');
-  assert.deepEqual(db.steps.map((s) => [s.step, s.userId, s.okCount]), [[1, 'maid01', 25], [2, 'head', 25], [3, 'front', 25]]);
+  assert.deepEqual(db.steps.map((s) => [s.step, s.userId, s.okCount]), [[1, 'maid02', 25], [2, 'head', 25], [3, 'front', 25]]);
 });
 
 test('รอบการใช้ห้องใหม่: พักซ้ำแล้วสร้างใบตรวจใหม่ ใบเก่าเก็บเป็นประวัติ', () => {
@@ -121,9 +121,9 @@ test('พบปัญหา: ห้อง = มีปัญหา, สร้า�
   const { db, ok, run } = fresh();
   ok('front', 'checkin', { roomId: '208' });
   ok('front', 'checkout', { roomId: '208' });
-  ok('maid01', 'cleaned', { roomId: '208' });
+  ok('maid02', 'cleaned', { roomId: '208' });
   const id = active(db, '208').id;
-  const r = ok('maid01', 'submitStep', {
+  const r = ok('maid02', 'submitStep', {
     inspectionId: id, step: 1,
     failures: [{ itemNo: 14, kind: 'missing', found: 2, note: 'หาย 2 ขวด' }, { itemNo: 9, kind: 'damaged', found: 1 }]
   });
@@ -138,22 +138,22 @@ test('พบปัญหา: ห้อง = มีปัญหา, สร้า�
   assert.equal(r.notify[0].kind, 'issue');
   // ระหว่างแก้ ห้ามผ่านต่อ
   assert.equal(run('head', 'submitStep', { inspectionId: id, step: 1, failures: [] }).ok, false);
-  assert.equal(run('maid01', 'submitStep', { inspectionId: id, failures: [] }).code, 'NEEDS_FIX');
+  assert.equal(run('maid02', 'submitStep', { inspectionId: id, failures: [] }).code, 'NEEDS_FIX');
 });
 
 test('แก้แล้วตรวจซ้ำ: กลับขั้นเดิม เห็นเฉพาะรายการที่มีปัญหา แล้วผ่านต่อได้', () => {
   const { db, ok } = fresh();
   ok('front', 'checkin', { roomId: '304' });
   ok('front', 'checkout', { roomId: '304' });
-  ok('maid04', 'cleaned', { roomId: '304' });
+  ok('maid03', 'cleaned', { roomId: '304' });
   const id = active(db, '304').id;
-  ok('maid04', 'submitStep', { inspectionId: id, step: 1, failures: [] });
+  ok('maid03', 'submitStep', { inspectionId: id, step: 1, failures: [] });
   ok('head', 'submitStep', { inspectionId: id, step: 2, failures: [{ itemNo: 7, kind: 'missing', found: 0 }] });
   assert.equal(room(db, '304').status, 'issue');
   // งานของแม่บ้านต้องมี "แก้ไข" และของหัวหน้าต้องยังไม่มี
   assert.equal(Core.tasksFor(db, db.users.find((u) => u.id === 'maid03')).filter((t) => t.kind === 'fix').length, 1);
   assert.equal(Core.tasksFor(db, db.users.find((u) => u.id === 'head')).length, 0);
-  const fx = ok('maid04', 'markFixed', { inspectionId: id });
+  const fx = ok('maid03', 'markFixed', { inspectionId: id });
   assert.equal(fx.notify[0].to.role, 'head_maid');
   assert.equal(db.issues[0].status, 'fixed');
   const insp = Core.inspOf(db, id);
@@ -301,4 +301,56 @@ test('apply กับคำสั่งแปลก ๆ ไม่พัง', () 
   assert.equal(Core.apply(db, ctx, 'constructor', {}).code, 'UNKNOWN');
   assert.equal(Core.apply(db, ctx, 'nope', {}).code, 'UNKNOWN');
   assert.equal(Core.apply(db, { nowMs: T0 }, 'checkin', {}).code, 'AUTH');
+});
+
+test('แม่บ้านทำได้เฉพาะชั้นของตัวเอง', () => {
+  const { db, ok, run } = fresh();
+  ok('front', 'checkin', { roomId: '203' });
+  ok('front', 'checkout', { roomId: '203' });
+  assert.equal(run('maid01', 'cleaned', { roomId: '203' }).code, 'FORBIDDEN');
+  assert.equal(room(db, '203').status, 'dirty');
+  ok('maid02', 'cleaned', { roomId: '203' });
+  const id = active(db, '203').id;
+  assert.equal(run('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [] }).code, 'FORBIDDEN');
+  assert.equal(run('maid01', 'startRoutine', { roomId: '205', round: 'morning' }).code, 'FORBIDDEN');
+  ok('maid02', 'startRoutine', { roomId: '205', round: 'morning' });
+  ok('head', 'startRoutine', { roomId: '305', round: 'morning' }); // หัวหน้าไม่จำกัดชั้น
+});
+
+test('แม่บ้านเห็นเฉพาะงานและข้อมูลของชั้นตัวเอง ส่วนหัวหน้า/แอดมิน/ฟรอนต์เห็นทั้งหมด', () => {
+  const { db, ok } = fresh();
+  ['203', '304'].forEach((r) => { ok('front', 'checkin', { roomId: r }); ok('front', 'checkout', { roomId: r }); });
+  const u = (id) => db.users.find((x) => x.id === id);
+  assert.deepEqual(Core.tasksFor(db, u('maid02')).map((t) => t.roomId), ['203']);
+  assert.deepEqual(Core.tasksFor(db, u('maid03')).map((t) => t.roomId), ['304']);
+  assert.equal(Core.tasksFor(db, u('maid01')).length, 0);
+  ok('maid02', 'cleaned', { roomId: '203' });
+  ok('maid03', 'cleaned', { roomId: '304' });
+  const s2 = Core.scopeDb(db, u('maid02'));
+  assert.deepEqual(s2.rooms.map((r) => r.floor).filter((v, i, a) => a.indexOf(v) === i), [2]);
+  assert.equal(s2.rooms.length, 8);
+  assert.deepEqual(s2.inspections.map((i) => i.roomId), ['203']);
+  assert.equal(s2.users.length, 1);
+  assert.equal(Core.scopeDb(db, u('head')), db);
+  assert.equal(Core.scopeDb(db, u('admin')), db);
+  assert.equal(Core.scopeDb(db, u('front')), db);
+});
+
+test('แม่บ้านที่ยังไม่ได้ตั้งชั้น: ไม่เห็นและไม่ทำอะไรเลย', () => {
+  const { db, run } = fresh();
+  const u = db.users.find((x) => x.id === 'maid05');
+  u.floors = '';
+  assert.equal(Core.scopeDb(db, u).rooms.length, 0);
+  assert.equal(Core.apply(db, { user: u, nowMs: T0 }, 'cleaned', { roomId: '501' }).code, 'FORBIDDEN');
+  assert.equal(Core.tasksFor(db, u).length, 0);
+});
+
+test('แม่บ้านหลายชั้น (floors = "1,2") เห็นและทำได้ทั้งสองชั้น', () => {
+  const { db, ok } = fresh();
+  db.users.find((x) => x.id === 'maid01').floors = '1,2';
+  ok('front', 'checkin', { roomId: '203' });
+  ok('front', 'checkout', { roomId: '203' });
+  const u = db.users.find((x) => x.id === 'maid01');
+  assert.deepEqual(Core.tasksFor(db, u).map((t) => t.roomId), ['203']);
+  ok('maid01', 'cleaned', { roomId: '203' });
 });

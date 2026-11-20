@@ -102,6 +102,22 @@ var Core = (function () {
   function needRole(ctx, roles) {
     if (!ctx.user || roles.indexOf(ctx.user.role) < 0) throw err('FORBIDDEN', 'บทบาทของคุณไม่มีสิทธิ์ทำรายการนี้');
   }
+  // ชั้นที่แม่บ้านคนนี้รับผิดชอบ เช่น '1,2' → [1,2]
+  function floorsOf(user) {
+    var out = [];
+    String(user && user.floors != null ? user.floors : '').split(',').forEach(function (x) {
+      var n = Number(String(x).trim());
+      if (n) out.push(n);
+    });
+    return out;
+  }
+  // แม่บ้านทำได้เฉพาะห้องในชั้นของตัวเอง (บทบาทอื่นไม่จำกัดชั้น) — แม่บ้านที่ยังไม่ได้ตั้งชั้นจะทำอะไรไม่ได้
+  function needFloor(ctx, room) {
+    if (!ctx.user || ctx.user.role !== 'maid') return;
+    if (floorsOf(ctx.user).indexOf(Number(room.floor)) < 0) {
+      throw err('FORBIDDEN', 'ห้อง ' + room.id + ' ไม่ใช่ชั้นที่คุณรับผิดชอบ');
+    }
+  }
   function recheckList(insp) {
     return insp.recheckItems ? String(insp.recheckItems).split(',').filter(Boolean).map(Number) : [];
   }
@@ -178,6 +194,7 @@ var Core = (function () {
   H.cleaned = function (db, ctx, p, out) {
     needRole(ctx, ['maid']);
     var room = mustRoom(db, p.roomId);
+    needFloor(ctx, room);
     if (room.status !== 'dirty') throw err('NOT_DIRTY', 'ห้อง ' + room.id + ' ไม่ได้อยู่ในสถานะรอทำความสะอาด (' + ROOM_STATUS[room.status] + ')');
     var insp = newInspection(db, out, ctx, room, 'checkout', '', p);
     setRoom(out, ctx, room, { status: 'inspecting', inspectionId: insp.id });
@@ -188,6 +205,7 @@ var Core = (function () {
   function startRoutineOne(db, ctx, roomId, round, p, out) {
     if (!ROUNDS[round]) throw err('BAD_ROUND', 'รอบตรวจไม่ถูกต้อง');
     var room = mustRoom(db, roomId);
+    needFloor(ctx, room);
     if (room.status !== 'ready') throw err('NOT_READY', 'ห้อง ' + room.id + ' ไม่ได้ว่างพร้อมขาย (' + ROOM_STATUS[room.status] + ')');
     var today = dateOf(ctx.nowMs);
     for (var i = 0; i < db.inspections.length; i++) {
@@ -247,6 +265,7 @@ var Core = (function () {
     var step = Number(insp.step);
     if (expectStep != null && Number(expectStep) !== step) throw err('STALE', 'ห้อง ' + room.id + ' ถูกส่งต่อไปขั้นอื่นแล้ว กรุณารีเฟรช');
     if (ctx.user.role !== STEP_ROLE[step]) throw err('FORBIDDEN', 'ขั้นที่ ' + step + ' เป็นหน้าที่ของ' + STEP_LABEL[step]);
+    needFloor(ctx, room);
     var fails = normFailures(db, failuresIn);
     var total = db.items.length;
     var recheck = recheckList(insp).length > 0;
@@ -327,6 +346,7 @@ var Core = (function () {
     needRole(ctx, ['maid', 'head_maid']);
     var insp = mustInsp(db, p.inspectionId);
     var room = mustRoom(db, insp.roomId);
+    needFloor(ctx, room);
     if (insp.status !== 'fixing') throw err('NOT_FIXING', 'ห้อง ' + room.id + ' ไม่มีรายการที่รอแก้ไข');
     var now = stamp(ctx.nowMs);
     var n = 0;
@@ -379,14 +399,16 @@ var Core = (function () {
   // งานของฉัน: ห้องที่ถึงคิวของบทบาทนี้
   function tasksFor(db, user) {
     var t = [], role = user.role;
+    var mine = role === 'maid' ? floorsOf(user) : null;
     if (role === 'maid') {
       db.rooms.forEach(function (r) {
-        if (r.status === 'dirty') t.push({ kind: 'clean', roomId: sid(r.id), floor: Number(r.floor), since: r.updatedAt, inspectionId: '', step: 0 });
+        if (r.status === 'dirty' && mine.indexOf(Number(r.floor)) >= 0) t.push({ kind: 'clean', roomId: sid(r.id), floor: Number(r.floor), since: r.updatedAt, inspectionId: '', step: 0 });
       });
     }
     db.inspections.forEach(function (i) {
       if (!isActive(i)) return;
       var room = roomOf(db, i.roomId);
+      if (mine && (!room || mine.indexOf(Number(room.floor)) < 0)) return;
       var base = {
         roomId: sid(i.roomId), floor: room ? Number(room.floor) : 0, inspectionId: i.id, since: i.stepSince,
         step: Number(i.step), type: i.type, round: i.round, recheck: recheckList(i).length
@@ -401,6 +423,21 @@ var Core = (function () {
       return (KIND_ORDER[a.kind] - KIND_ORDER[b.kind]) || (toMs(a.since) - toMs(b.since)) || (a.roomId < b.roomId ? -1 : 1);
     });
     return t;
+  }
+
+  // ข้อมูลที่ผู้ใช้คนนี้มีสิทธิ์เห็น: แม่บ้านเห็นเฉพาะห้อง/ใบตรวจ/ปัญหาของชั้นตัวเอง บทบาทอื่นเห็นทั้งหมด
+  function scopeDb(db, user) {
+    if (!user || user.role !== 'maid') return db;
+    var mine = floorsOf(user), rooms = [], ids = {}, insp = [], iid = {};
+    db.rooms.forEach(function (r) { if (mine.indexOf(Number(r.floor)) >= 0) { rooms.push(r); ids[sid(r.id)] = 1; } });
+    db.inspections.forEach(function (i) { if (ids[sid(i.roomId)]) { insp.push(i); iid[i.id] = 1; } });
+    return {
+      rooms: rooms, items: db.items,
+      users: db.users.filter(function (u) { return u.id === user.id; }),
+      inspections: insp,
+      steps: db.steps.filter(function (x) { return iid[x.inspectionId]; }),
+      issues: db.issues.filter(function (x) { return iid[x.inspectionId] || ids[sid(x.roomId)]; })
+    };
   }
 
   function summary(db, nowMs, overdueMin) {
@@ -488,7 +525,7 @@ var Core = (function () {
   return {
     ROLES: ROLES, STEP_ROLE: STEP_ROLE, STEP_LABEL: STEP_LABEL, ROOM_STATUS: ROOM_STATUS, ROUNDS: ROUNDS,
     KIND_LABEL: KIND_LABEL, SCHEMA: SCHEMA,
-    apply: apply, tasksFor: tasksFor, summary: summary, topItems: topItems,
+    apply: apply, tasksFor: tasksFor, scopeDb: scopeDb, floorsOf: floorsOf, summary: summary, topItems: topItems,
     stamp: stamp, dateOf: dateOf, toMs: toMs, minutesSince: minutesSince, recheckList: recheckList,
     roomOf: roomOf, inspOf: inspOf, activeInspOf: activeInspOf,
     seedItems: seedItems, seedRooms: seedRooms, seedUsers: seedUsers, seedDb: seedDb
