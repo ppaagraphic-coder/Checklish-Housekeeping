@@ -287,7 +287,13 @@ var Core = (function () {
     return !!p && p.length >= 40;
   }
 
-  function submitStepOne(db, ctx, inspectionId, expectStep, failuresIn, out, signature) {
+  // ชื่อที่ผู้ตรวจพิมพ์ตอนเซ็น (ไม่ใส่ = ใช้ชื่อบัญชี) ตัดช่องว่างซ้ำ จำกัด 60 ตัวอักษร กันขึ้นต้นด้วย = + - @ (ไม่ให้ชีตตีความเป็นสูตร)
+  function cleanName(n, fallback) {
+    var s = String(n == null ? '' : n).replace(/\s+/g, ' ').replace(/^[=+\-@\s]+/, '').trim().slice(0, 60);
+    return s || fallback;
+  }
+
+  function submitStepOne(db, ctx, inspectionId, expectStep, failuresIn, out, signature, signName) {
     var insp = mustInsp(db, inspectionId);
     var room = mustRoom(db, insp.roomId);
     if (insp.status === 'fixing') throw err('NEEDS_FIX', 'ห้อง ' + room.id + ' มีรายการที่ต้องแก้ไขก่อน');
@@ -303,7 +309,7 @@ var Core = (function () {
     var now = stamp(ctx.nowMs);
 
     var rec = {
-      inspectionId: insp.id, step: step, userId: ctx.user.id, userName: ctx.user.name, at: now,
+      inspectionId: insp.id, step: step, userId: ctx.user.id, userName: cleanName(signName, ctx.user.name), at: now,
       okCount: total - fails.length, failCount: fails.length,
       result: fails.length ? 'fail' : 'pass', mode: recheck ? 'recheck' : 'check', signature: signature
     };
@@ -355,7 +361,7 @@ var Core = (function () {
 
   // ส่งผลตรวจ 1 ขั้น — p.failures = [{itemNo, kind, found, note}] (ว่าง = ครบทุกรายการ)
   H.submitStep = function (db, ctx, p, out) {
-    out.result = submitStepOne(db, ctx, p.inspectionId, p.step, p.failures, out, p.signature);
+    out.result = submitStepOne(db, ctx, p.inspectionId, p.step, p.failures, out, p.signature, p.signName);
   };
 
   // ผ่านหลายห้องพร้อมกัน (ไม่มีรายการ ✗) — p.items = [{inspectionId, step}]
@@ -366,7 +372,7 @@ var Core = (function () {
     (p.items || []).forEach(function (it) {
       var msg = tryEach(function () {
         // ตรวจสิทธิ์ก่อนแตะข้อมูล (submitStepOne ตรวจให้อยู่แล้ว)
-        submitStepOne(db, ctx, it.inspectionId, it.step, [], out, p.signature);
+        submitStepOne(db, ctx, it.inspectionId, it.step, [], out, p.signature, p.signName);
         passed.push(it.inspectionId);
       });
       if (msg) skipped.push({ inspectionId: it.inspectionId, message: msg });
@@ -528,6 +534,84 @@ var Core = (function () {
     }).sort(function (a, b) { return b.count - a.count; }).slice(0, 8);
   }
 
+  // ---------- สรุปตัวเลขย้อนหลังหลายวัน สำหรับแท็บ Dashboard (แอดมิน) ----------
+  // db ต้องมี inspections, steps, issues → คืนตัวเลขสรุปขนาดเล็ก (ไม่มีลายเซ็น) ใช้ได้ทั้งในเบราว์เซอร์และ Apps Script
+  function minDiff(a, b) {
+    var x = toMs(a), y = toMs(b);
+    return x && y ? Math.max(0, Math.round((y - x) / 60000)) : null;
+  }
+  function avgOf(arr) {
+    return arr.length ? Math.round(arr.reduce(function (p, q) { return p + q; }, 0) / arr.length) : null;
+  }
+  function dashboard(db, nowMs, days) {
+    days = Math.max(1, Math.min(90, Math.floor(Number(days)) || 7));
+    var dates = [], k;
+    for (k = days - 1; k >= 0; k--) dates.push(dateOf(nowMs - k * 86400000));
+    var from = dates[0];
+    var byInsp = {};
+    db.steps.forEach(function (s) { (byInsp[s.inspectionId] = byInsp[s.inspectionId] || []).push(s); });
+    var failed = function (i) { return (byInsp[i.id] || []).some(function (s) { return s.result === 'fail'; }); };
+
+    var daily = dates.map(function (d) { return { date: d, clean: 0, issue: 0, open: 0, total: 0 }; });
+    var idx = {}; daily.forEach(function (x, n) { idx[x.date] = n; });
+    var t = { started: 0, clean: 0, issue: 0, open: 0 }, durs = [];
+    var waits = { 1: [], 2: [], 3: [] };
+    db.inspections.forEach(function (i) {
+      if (i.status === 'cancelled' || i.date < from || idx[i.date] == null) return;
+      var cat = failed(i) ? 'issue' : (i.status === 'passed' ? 'clean' : 'open');
+      daily[idx[i.date]][cat]++; daily[idx[i.date]].total++;
+      t.started++; t[cat]++;
+      if (i.status === 'passed') { var m = minDiff(i.startedAt, i.finishedAt); if (m != null) durs.push(m); }
+      // เวลาต่อขั้น = นับจากเวลาเริ่มใบตรวจ/เวลาเซ็นขั้นก่อนหน้า ถึงเวลาเซ็นขั้นนั้น (ขั้นที่ตรวจซ้ำจะรวมเวลารอแก้ไขด้วย)
+      var prev = i.startedAt;
+      (byInsp[i.id] || []).slice().sort(function (a, b) { return a.at < b.at ? -1 : a.at > b.at ? 1 : 0; }).forEach(function (s) {
+        var w = minDiff(prev, s.at);
+        if (w != null && waits[s.step]) waits[s.step].push(w);
+        prev = s.at;
+      });
+    });
+    var decided = t.clean + t.issue;
+    var stepWait = [1, 2, 3].map(function (n) { return { step: n, label: STEP_LABEL[n], avg: avgOf(waits[n]), n: waits[n].length }; });
+
+    var by = {};
+    db.steps.forEach(function (s) {
+      if (String(s.at).slice(0, 10) < from) return;
+      var key = s.userName + '|' + s.step;
+      if (!by[key]) by[key] = { name: s.userName, step: Number(s.step), label: STEP_LABEL[s.step], n: 0, fails: 0, fix: false };
+      by[key].n++; if (s.result === 'fail') by[key].fails++;
+    });
+    var rangeIssues = db.issues.filter(function (x) { return String(x.reportedAt).slice(0, 10) >= from; });
+    var fixDurs = [], fixBy = {};
+    db.issues.forEach(function (x) {
+      if (x.status !== 'fixed' || String(x.fixedAt).slice(0, 10) < from) return;
+      var m = minDiff(x.reportedAt, x.fixedAt); if (m != null) fixDurs.push(m);
+      var key = (x.fixedBy || '-') + '|fix';
+      if (!fixBy[key]) fixBy[key] = { name: x.fixedBy || '-', step: 9, label: 'แม่บ้าน (แก้ไข)', n: 0, fails: 0, fix: true, sum: 0 };
+      fixBy[key].n++; fixBy[key].sum += m || 0;
+    });
+    var staff = Object.keys(by).map(function (q) { return by[q]; }).concat(Object.keys(fixBy).map(function (q) {
+      var o = fixBy[q]; o.avgFix = o.n ? Math.round(o.sum / o.n) : null; delete o.sum; return o;
+    })).sort(function (a, b) { return a.step - b.step || (a.name < b.name ? -1 : 1); });
+
+    var rooms = {};
+    rangeIssues.forEach(function (x) { var r = sid(x.roomId); rooms[r] = (rooms[r] || 0) + 1; });
+    var topRooms = Object.keys(rooms).map(function (r) { return { roomId: r, count: rooms[r] }; })
+      .sort(function (a, b) { return b.count - a.count; }).slice(0, 5);
+    return {
+      days: days, from: from, to: dates[dates.length - 1], daily: daily,
+      totals: { started: t.started, clean: t.clean, issue: t.issue, open: t.open, avgDone: avgOf(durs), firstPassRate: decided ? Math.round(t.clean / decided * 100) : null },
+      stepWait: stepWait, staff: staff,
+      issues: {
+        reported: rangeIssues.length,
+        missing: rangeIssues.filter(function (x) { return x.kind !== 'damaged'; }).length,
+        damaged: rangeIssues.filter(function (x) { return x.kind === 'damaged'; }).length,
+        fixed: fixDurs.length, avgFix: avgOf(fixDurs),
+        open: db.issues.filter(function (x) { return x.status === 'open'; }).length
+      },
+      topItems: topItems(rangeIssues), topRooms: topRooms
+    };
+  }
+
   // ---------- ข้อมูลสำหรับฟอร์มกระดาษ (หน้าตรวจเช็กรายการของใช้ภายในห้องพัก) ----------
   // db ต้องมี items, inspections, steps, issues → คืนข้อมูลพร้อมวาดเป็นฟอร์ม
   // ช่อง 1/2/3 = ผู้ตรวจคนที่ 1/2/3 (ขั้นตรวจที่ 1/2/3): ✓ ผ่าน, ✗ พบปัญหาที่ยังไม่แก้, ว่าง = ยังไม่ตรวจ/รอตรวจซ้ำ
@@ -606,7 +690,7 @@ var Core = (function () {
   return {
     ROLES: ROLES, STEP_ROLE: STEP_ROLE, STEP_LABEL: STEP_LABEL, ROOM_STATUS: ROOM_STATUS, ROUNDS: ROUNDS,
     KIND_LABEL: KIND_LABEL, SCHEMA: SCHEMA,
-    apply: apply, tasksFor: tasksFor, scopeDb: scopeDb, floorsOf: floorsOf, summary: summary, topItems: topItems,
+    apply: apply, tasksFor: tasksFor, scopeDb: scopeDb, floorsOf: floorsOf, summary: summary, topItems: topItems, dashboard: dashboard,
     stamp: stamp, dateOf: dateOf, toMs: toMs, minutesSince: minutesSince, recheckList: recheckList,
     roomOf: roomOf, inspOf: inspOf, activeInspOf: activeInspOf,
     parseSignature: parseSignature, validSignature: validSignature, formData: formData,

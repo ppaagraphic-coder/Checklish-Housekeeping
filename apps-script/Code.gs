@@ -57,6 +57,7 @@ function route_(req) {
   if (req.action === 'state') return state_(user);
   if (req.action === 'batch') return batch_(user, req);
   if (req.action === 'history') return history_(user, req);
+  if (req.action === 'dashboard') return dashboard_(user, req);
   return act_(user, req);
 }
 
@@ -412,6 +413,24 @@ function history_(user, req) {
     steps: readTable_('Steps', HISTORY_TAIL.Steps).filter(function (s) { return ids[s.inspectionId]; }),
     issues: readTable_('Issues', HISTORY_TAIL.Issues).filter(function (x) { return ids[x.inspectionId]; })
   };
+}
+
+// สรุปตัวเลขย้อนหลัง 7/14/30 วันสำหรับแท็บ Dashboard (เฉพาะแอดมิน) — คำนวณฝั่งเซิร์ฟเวอร์ ส่งกลับมาแต่ตัวเลขสรุป
+function dashboard_(user, req) {
+  if (user.role !== 'admin') return { ok: false, code: 'FORBIDDEN', message: 'เฉพาะผู้ดูแลระบบ' };
+  var days = [7, 14, 30].indexOf(Number(req.days)) >= 0 ? Number(req.days) : 7;
+  var cache = CacheService.getScriptCache();
+  var key = 'dash_' + days + '_' + version_();
+  var hit = cache.get(key);
+  if (hit) return JSON.parse(hit);
+  var db = {
+    inspections: readTable_('Inspections', HISTORY_TAIL.Inspections),
+    steps: readTable_('Steps', HISTORY_TAIL.Steps),
+    issues: readTable_('Issues', HISTORY_TAIL.Issues)
+  };
+  var out = { ok: true, now: Date.now(), days: days, data: Core.dashboard(db, Date.now(), days) };
+  try { cache.put(key, JSON.stringify(out), 120); } catch (e) { /* แคชไม่ได้ก็ไม่เป็นไร */ }
+  return out;
 }
 
 function act_(user, req) {
