@@ -406,10 +406,12 @@
       var strokes = [], cur = null, dlg = $('dialog');
       dlg.innerHTML = '<div class="dialog" role="dialog" aria-modal="true" aria-label="เซ็นชื่อยืนยัน"><div class="box signbox">' +
         '<h3>เซ็นชื่อยืนยันผลการตรวจ</h3><p class="sub">' + h(info.text) + '</p>' +
-        '<div class="signwho"><b>' + h(S.user.name) + '</b> · ' + h(ROLE[S.user.role]) + ' · ' + hhmm(Core.stamp(Date.now())) + ' น.</div>' +
+        '<div class="signwho">' + h(ROLE[S.user.role]) + ' · ' + hhmm(Core.stamp(Date.now())) + ' น.</div>' +
+        '<label class="signname"><span>ชื่อ-นามสกุลผู้ตรวจ</span><input id="sigName" type="text" maxlength="60" autocomplete="name" placeholder="พิมพ์ชื่อ-นามสกุล" value="' + h(S.user.name) + '"></label>' +
         '<div class="sigframe"><canvas id="sigCv" width="640" height="240" aria-label="ช่องเซ็นชื่อ เซ็นด้วยนิ้วหรือปากกา"></canvas><span class="sigline" id="sigHint">เซ็นชื่อในกรอบนี้</span></div>' +
         '<div class="acts"><button class="btn ghost" data-s="cancel">ยกเลิก</button><button class="btn ghost" data-s="clear">ล้าง</button><button class="btn" data-s="ok" disabled>ยืนยัน ส่งผล</button></div></div></div>';
-      var cv = $('sigCv'), ctx = cv.getContext('2d'), okBtn = dlg.querySelector('[data-s=ok]');
+      var cv = $('sigCv'), ctx = cv.getContext('2d'), okBtn = dlg.querySelector('[data-s=ok]'), nameIn = $('sigName');
+      function nameOk() { return nameIn.value.replace(/\s+/g, '').length > 0; }
       function paint() {
         ctx.setTransform(2, 0, 0, 2, 0, 0); ctx.clearRect(0, 0, SIGW, SIGH);
         ctx.strokeStyle = '#13307a'; ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -424,7 +426,8 @@
         var r = cv.getBoundingClientRect();
         return [Math.max(0, Math.min(SIGW, Math.round((e.clientX - r.left) / r.width * SIGW))), Math.max(0, Math.min(SIGH, Math.round((e.clientY - r.top) / r.height * SIGH)))];
       }
-      function ready() { return Core.validSignature(encodeSig(strokes)); }
+      function ready() { return nameOk() && Core.validSignature(encodeSig(strokes)); }
+      nameIn.addEventListener('input', function () { okBtn.disabled = !ready(); });
       cv.addEventListener('pointerdown', function (e) {
         e.preventDefault(); try { cv.setPointerCapture(e.pointerId); } catch (er) { /* ignore */ }
         var p = pos(e); cur = [p[0], p[1]]; strokes.push(cur); $('sigHint').style.display = 'none'; paint();
@@ -452,8 +455,9 @@
             });
             sig = encodeSig(strokes);
           }
-          if (!Core.validSignature(sig)) return;
-          dlg.innerHTML = ''; dlg.onclick = null; resolve(sig); return;
+          if (!nameOk() || !Core.validSignature(sig)) return;
+          var nm = nameIn.value.replace(/\s+/g, ' ').trim();
+          dlg.innerHTML = ''; dlg.onclick = null; resolve({ sig: sig, name: nm }); return;
         }
         dlg.innerHTML = ''; dlg.onclick = null; resolve(null);
       };
@@ -510,9 +514,9 @@
     });
     var step = F.step, room = F.room, inspId = F.inspId;
     // เช็กเสร็จแล้วต้องเซ็นชื่อยืนยันก่อนส่งทุกครั้ง (ทั้งผ่านและพบปัญหา)
-    openSign({ text: 'ห้อง ' + room + ' · ตรวจขั้นที่ ' + step + ' · ' + (failures.length ? 'พบปัญหา ' + failures.length + ' รายการ' : 'ครบทุกรายการ') }).then(function (sig) {
-      if (!sig) return;
-      run('submitStep', { inspectionId: inspId, step: step, failures: failures, signature: sig }, function (res) {
+    openSign({ text: 'ห้อง ' + room + ' · ตรวจขั้นที่ ' + step + ' · ' + (failures.length ? 'พบปัญหา ' + failures.length + ' รายการ' : 'ครบทุกรายการ') }).then(function (sg) {
+      if (!sg) return;
+      run('submitStep', { inspectionId: inspId, step: step, failures: failures, signature: sg.sig, signName: sg.name }, function (res) {
         closeSheet();
         if (res.queued) return;
         var r = res.result || {};
@@ -618,9 +622,9 @@
       var items = myTasks().filter(function (t) { return S.sel[t.inspectionId]; }).map(function (t) { return { inspectionId: t.inspectionId, step: t.step }; });
       ask('ยืนยันให้ ' + items.length + ' ห้องที่เลือกผ่านทั้งหมด (ครบทุกรายการ)?', 'ผ่านทั้งหมด').then(function (y) {
         if (!y) return;
-        openSign({ text: 'ผ่านทั้งหมด ' + items.length + ' ห้อง (ลายเซ็นนี้ใช้กับทุกห้องที่เลือก)' }).then(function (sig) {
-          if (!sig) return;
-          run('bulkPass', { items: items, signature: sig }, function (res) {
+        openSign({ text: 'ผ่านทั้งหมด ' + items.length + ' ห้อง (ลายเซ็นนี้ใช้กับทุกห้องที่เลือก)' }).then(function (sg) {
+          if (!sg) return;
+          run('bulkPass', { items: items, signature: sg.sig, signName: sg.name }, function (res) {
             S.sel = {};
             if (res.queued) return;
             var r = res.result;
