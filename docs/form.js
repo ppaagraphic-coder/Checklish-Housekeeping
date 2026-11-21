@@ -18,6 +18,11 @@ var FormImage = (function () {
     var m = /^(\d{4})-(\d\d)-(\d\d)/.exec(d || '');
     return m ? (+m[3]) + ' ' + MONTHS[+m[2] - 1] + ' ' + (+m[1] + 543) : '';
   }
+  var SHORT_M = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+  function shortDate(s) {
+    var m = /^(\d{4})-(\d\d)-(\d\d)/.exec(s || '');
+    return m ? (+m[3]) + ' ' + SHORT_M[+m[2] - 1] + ' ' + (+m[1] + 543) : '';
+  }
   function hhmm(s) { return s ? String(s).slice(11, 16) : ''; }
   var ROUND = { morning: 'ตรวจรอบเช้า', afternoon: 'ตรวจรอบบ่าย' };
   function kindText(d) { return d.type === 'checkout' ? 'ตรวจหลังแขกออก' : (ROUND[d.round] || 'ตรวจตามรอบ'); }
@@ -117,7 +122,11 @@ var FormImage = (function () {
     text(c, 'ตรวจเช็กรายการของใช้ภายในห้องพัก', W / 2, 137, { size: 17, weight: 700, align: 'center' });
 
     // บรรทัดวันที่
-    text(c, 'วันที่ตรวจ  ' + thaiDate(d.date), X.l + 2, 183, { size: 13, weight: 500 });
+    var days = d.signers.filter(function (s) { return s.done; }).map(function (s) { return String(s.at).slice(0, 10); });
+    var lastDay = days.length ? days[days.length - 1] : d.date;
+    var spans = lastDay !== d.date;
+    text(c, spans ? 'เริ่มตรวจ ' + thaiDate(d.date) : 'วันที่ตรวจ  ' + thaiDate(d.date), X.l + 2, spans ? 176 : 183, { size: spans ? 11.5 : 13, weight: 500 });
+    if (spans) text(c, 'เซ็นล่าสุด ' + thaiDate(lastDay), X.l + 2, 192, { size: 10.5, color: '#555' });
     text(c, 'ห้อง ' + d.roomId + '  ·  ' + kindText(d), 300, 183, { size: 13, weight: 700 });
     text(c, statusText(d), X.r, 183, { size: 12, weight: 600, align: 'right', color: d.status === 'passed' ? GREEN : (d.status === 'cancelled' || d.status === 'fixing' ? RED : '#8a5a00') });
 
@@ -187,7 +196,7 @@ var FormImage = (function () {
     text(c, 'ผล', (G.a + G.b) / 2 + (G.b - G.a) * 0.42, gy + gh / 2, { size: 10.5, weight: 700, align: 'center' });
     text(c, 'ชื่อ-นามสกุล / ลายมือชื่อผู้ตรวจสอบ', (G.b + G.c) / 2, gy + gh / 2, { size: 10.5, weight: 700, align: 'center' });
     text(c, 'ตำแหน่ง / แผนก', (G.c + G.e) / 2, gy + gh / 2, { size: 10.5, weight: 700, align: 'center' });
-    text(c, 'เวลาที่ตรวจ', (G.e + G.r) / 2, gy + gh / 2, { size: 10.5, weight: 700, align: 'center' });
+    text(c, 'วัน-เวลาที่ตรวจ', (G.e + G.r) / 2, gy + gh / 2, { size: 10.5, weight: 700, align: 'center' });
     var pos = ['แม่บ้านประจำชั้น', 'หัวหน้าแม่บ้าน', 'หัวหน้า / ฝ่ายต้อนรับ (QC)'];
     d.signers.forEach(function (s, k) {
       var y = gy + gh + rh * k, cy = y + rh / 2;
@@ -198,11 +207,12 @@ var FormImage = (function () {
         if (!drawn) text(c, 'ไม่มีลายเซ็น (บันทึกก่อนเปิดใช้ลายเซ็น)', (G.b + G.c) / 2, y + 17, { size: 9, color: '#999', align: 'center' });
         text(c, '(' + s.userName + ')', (G.b + G.c) / 2, y + rh - 8, { size: 9.5, align: 'center' });
         text(c, pos[k], (G.c + G.e) / 2, cy, { size: 10.5, align: 'center' });
-        text(c, hhmm(s.at) + ' น.', (G.e + G.r) / 2, cy, { size: 11, align: 'center' });
+        text(c, shortDate(s.at), (G.e + G.r) / 2, cy - 8, { size: 10, align: 'center' });
+        text(c, hhmm(s.at) + ' น.', (G.e + G.r) / 2, cy + 8, { size: 11, weight: 600, align: 'center' });
       } else {
         text(c, 'ลงชื่อ ................................................', G.b + 8, cy, { size: 9.5, color: '#999' });
         text(c, pos[k], (G.c + G.e) / 2, cy, { size: 10, align: 'center', color: '#999' });
-        text(c, '...... : ...... น.', (G.e + G.r) / 2, cy, { size: 10, align: 'center', color: '#999' });
+        text(c, '....../....../...... ..:.. น.', (G.e + G.r) / 2, cy, { size: 8.5, align: 'center', color: '#999' });
       }
     });
 

@@ -224,6 +224,13 @@ var Api = (function () {
         .catch(function () { return { ok: false, offline: true, message: 'เชื่อมต่อไม่ได้ ตรวจสอบสัญญาณแล้วลองใหม่' }; });
     },
 
+    // สรุปตัวเลขย้อนหลัง (เฉพาะแอดมิน) → { ok, data } ; โหมดทดลองคำนวณจากข้อมูลในเครื่อง
+    dashboard: function (days) {
+      if (!live) return Promise.resolve({ ok: true, days: days, data: Core.dashboard(cache.db, Date.now(), days) });
+      return idle().then(function () { return call({ action: 'dashboard', days: days, token: token }); })
+        .catch(function () { return { ok: false, offline: true, message: 'เชื่อมต่อไม่ได้ ตรวจสอบสัญญาณแล้วลองใหม่' }; });
+    },
+
     ping: function () {
       if (!live) return Promise.resolve({ ok: true, ver: '' });
       return call({ action: 'ping', token: token }).catch(function () { return { ok: false, offline: true }; });

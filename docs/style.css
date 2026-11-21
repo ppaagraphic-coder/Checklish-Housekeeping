@@ -285,3 +285,36 @@ button.rowline { background: none; border-left: 0; border-right: 0; border-botto
 .hacts .btn { flex: 1; }
 .formview { background: #CBD5D4; padding: 12px; }
 .formcv { display: block; width: 100%; max-width: 820px; height: auto; margin: 0 auto; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,.28); }
+
+/* ---------- แอดมิน: ตัวเลขสรุป / ไทม์ไลน์ใบตรวจ ---------- */
+.kpis { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; margin-top: 12px; }
+.kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.kpi b { display: block; font-size: 22px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.kpi span { display: block; font-size: 13px; color: var(--ink2); margin-top: 2px; }
+.kpi.ok b { color: var(--ready-ink); }
+.kpi.bad b { color: var(--issue-ink); }
+.hist .tl { margin: 6px 0 8px; padding: 8px 10px; border-radius: 10px; background: var(--fog); font-size: 13px; line-height: 1.6; }
+@media (min-width: 760px) { .kpis { grid-template-columns: repeat(4, 1fr); } }
+
+/* ---------- ฟอร์มตรวจ: แถบความคืบหน้า / รายการที่ยังว่าง ---------- */
+.fprog { position: sticky; top: -14px; z-index: 3; margin: -14px -16px 12px; padding: 10px 16px; background: var(--paper); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.fprog b { flex: none; }
+.fprog span { flex: none; color: var(--ink2); }
+.fprog span.done { color: var(--ready-ink); font-weight: 700; }
+.fprog-bar { flex: 1; height: 8px; border-radius: 99px; background: var(--fog); overflow: hidden; }
+.fprog-bar span { display: block; height: 100%; background: var(--ready); transition: width .2s; }
+.it.need { border-color: var(--issue); box-shadow: 0 0 0 3px var(--issue-t); }
+.btn[aria-disabled=true] { opacity: .55; }
+
+/* ---------- Dashboard ---------- */
+.dchart { display: flex; align-items: flex-end; gap: 4px; height: 180px; padding-top: 4px; }
+.dcol { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+.dcol b { font-size: 11px; font-weight: 600; line-height: 1.4; color: var(--ink2); height: 16px; }
+.dstack { width: 100%; max-width: 34px; flex: 1; display: flex; flex-direction: column; justify-content: flex-end; background: var(--fog); border-radius: 6px 6px 0 0; overflow: hidden; }
+.dstack i { display: block; width: 100%; }
+.dstack i.p, .dleg i.p { background: var(--ready); }
+.dstack i.f, .dleg i.f { background: var(--issue); }
+.dstack i.o, .dleg i.o { background: var(--insp); }
+.dcol span { font-size: 11px; color: var(--mute); height: 18px; line-height: 18px; white-space: nowrap; }
+.dleg { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 13px; color: var(--ink2); }
+.dleg i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }

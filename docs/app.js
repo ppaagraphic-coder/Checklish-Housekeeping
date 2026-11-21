@@ -14,8 +14,16 @@
   function $(id) { return document.getElementById(id); }
   function h(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function hhmm(stamp) { return stamp ? String(stamp).slice(11, 16) : ''; }
+  // วัน-เวลา: ถ้าเป็นวันนี้แสดงแค่เวลา ถ้าคนละวันแสดง "วัน/เดือน เวลา" (always = แสดงวันที่เสมอ)
+  function dt(stamp, always) {
+    if (!stamp) return '';
+    var d = String(stamp).slice(0, 10);
+    return (always || d !== Core.dateOf(Date.now()) ? (+d.slice(8, 10)) + '/' + (+d.slice(5, 7)) + ' ' : '') + hhmm(stamp) + ' น.';
+  }
   function fmtMin(m) { return m < 60 ? m + ' นาที' : Math.floor(m / 60) + ' ชม. ' + (m % 60 ? (m % 60) + ' นาที' : ''); }
   function waitMin(since) { return since ? Core.minutesSince(since, Date.now()) : 0; }
+  function minBetween(a, b) { return a && b ? Math.max(0, Math.round((Core.toMs(b) - Core.toMs(a)) / 60000)) : null; }
+  function avg(arr) { return arr.length ? Math.round(arr.reduce(function (x, y) { return x + y; }, 0) / arr.length) : null; }
   function floorsOf(u) { return u && u.floors ? String(u.floors).split(',').map(function (s) { return Number(s.trim()); }).filter(Boolean) : []; }
   function toast(msg, cls) {
     var box = $('toast'), el = document.createElement('div');
@@ -126,7 +134,7 @@
 
   // ---------- โครงหน้าหลัก ----------
   function tabsFor(role) {
-    if (role === 'admin') return [{ id: 'overview', label: 'ภาพรวม' }, { id: 'issues', label: 'ปัญหา' }, { id: 'history', label: 'ประวัติ' }];
+    if (role === 'admin') return [{ id: 'overview', label: 'ภาพรวม' }, { id: 'dashboard', label: 'Dashboard' }, { id: 'issues', label: 'ปัญหา' }, { id: 'history', label: 'ประวัติ' }];
     if (role === 'reception') return [{ id: 'tasks', label: 'ตรวจขั้นสุดท้าย' }, { id: 'rooms', label: 'ห้องพัก' }];
     return [{ id: 'tasks', label: 'งานของฉัน' }, { id: 'rooms', label: 'ผังห้อง' }];
   }
@@ -157,7 +165,7 @@
     }).join('') + '</nav>';
     var view = noFloor
       ? '<h1 class="page-h">ยังไม่ได้กำหนดชั้น</h1>' + emptyHtml('บัญชีนี้ยังไม่มีชั้นที่รับผิดชอบ', 'แจ้งผู้ดูแลระบบให้ใส่เลขชั้นในชีต Users (คอลัมน์ floors)')
-      : { tasks: tasksView, rooms: roomsView, overview: overviewView, issues: issuesView, history: historyView }[S.tab](tasks);
+      : { tasks: tasksView, rooms: roomsView, overview: overviewView, dashboard: dashboardView, issues: issuesView, history: historyView }[S.tab](tasks);
     $('app').innerHTML = demo + top + nav + '<main class="main">' + view + '</main>' + extraBar(tasks);
     document.title = (tasks.length ? '(' + tasks.length + ') ' : '') + 'ตรวจห้องพัก';
     window.scrollTo(0, y);
@@ -194,7 +202,7 @@
     var prev = lastStep(t.inspectionId);
     var chips = '<span class="pill">' + h(typeLabel(t)) + '</span>';
     if (t.recheck) chips += '<span class="pill warn">ตรวจซ้ำ ' + t.recheck + ' รายการ</span>';
-    var from = prev && t.step > 1 && !t.recheck ? '<div class="sub">ผ่านขั้นก่อนหน้า ' + h(prev.userName) + ' ' + hhmm(prev.at) + ' น.</div>' : '';
+    var from = prev && t.step > 1 && !t.recheck ? '<div class="sub">ผ่านขั้นก่อนหน้า ' + h(prev.userName) + ' ' + dt(prev.at) + '</div>' : '';
     var box = canBulk() && !t.recheck ? '<button class="check" role="checkbox" aria-checked="' + (S.sel[t.inspectionId] ? 'true' : 'false') + '" aria-label="เลือกห้อง ' + h(t.roomId) + '" data-act="sel" data-insp="' + h(t.inspectionId) + '"><i>' + (S.sel[t.inspectionId] ? '✓' : '') + '</i></button>' : '';
     return '<div class="task' + (late ? ' overdue' : '') + '" data-act="openForm" data-insp="' + h(t.inspectionId) + '" role="button" tabindex="0">' + box +
       '<div class="tno">' + h(t.roomId) + '<small>ชั้น ' + t.floor + '</small></div>' +
@@ -265,7 +273,7 @@
     var strip = ['ready', 'occupied', 'dirty', 'inspecting', 'issue'].map(function (k) {
       return '<span class="s-' + k + '" style="width:' + (s.counts[k] / total * 100) + '%"></span>';
     }).join('');
-    var rounds = [['checkout', 'ตรวจหลังแขกออก']].map(function (r) {
+    var rounds = [['checkout', 'ตรวจหลังแขกออก'], ['morning', 'ตรวจรอบเช้า'], ['afternoon', 'ตรวจรอบบ่าย']].filter(function (r) { return r[0] === 'checkout' || s.groups[r[0]].total; }).map(function (r) {
       var g = s.groups[r[0]], t = g.total || 1;
       return '<div class="prog"><div class="prog-h"><b>' + r[1] + '</b><span>ผ่านแล้ว ' + g.passed + ' / ' + g.total + (g.fixing ? ' <span class="pill issue">มีปัญหา ' + g.fixing + '</span>' : '') + '</span></div>' +
         '<div class="bar"><span class="p" style="width:' + (g.passed / t * 100) + '%"></span><span class="o" style="width:' + (g.open / t * 100) + '%"></span><span class="f" style="width:' + (g.fixing / t * 100) + '%"></span></div></div>';
@@ -276,22 +284,137 @@
     }).join('') : '<p class="sub">ไม่มีห้องค้างเกิน ' + OVERDUE + ' นาที</p>';
     var max = s.topItems.length ? s.topItems[0].count : 1;
     var top = s.topItems.length ? s.topItems.map(function (x) {
-      return '<div class="rowline"><span class="rt">' + h(x.name) + '<small>พบ ' + x.count + ' ครั้งใน ' + x.roomCount + ' ห้อง (ขาด ' + x.missing + ' / ชำรุด ' + x.damaged + ')</small><div class="hbar"><i style="width:' + (x.count / max * 100) + '%"></i></div></span></div>';
+      return '<button class="rowline" data-act="item" data-no="' + x.itemNo + '"><span class="rt">' + h(x.name) + '<small>พบ ' + x.count + ' ครั้งใน ' + x.roomCount + ' ห้อง (ขาด ' + x.missing + ' / ชำรุด ' + x.damaged + ')</small><div class="hbar"><i style="width:' + (x.count / max * 100) + '%"></i></div></span><span class="rr">›</span></button>';
     }).join('') : '<p class="sub">ยังไม่มีรายการที่พบปัญหา</p>';
-    return '<h1 class="page-h">ภาพรวมวันนี้</h1><div class="panel">' + '<div class="strip" role="img" aria-label="สัดส่วนสถานะห้อง">' + strip + '</div>' + legendHtml(s.counts) + '</div>' +
+    var st = adminStats();
+    function kpi(v, l, cls) { return '<div class="kpi' + (cls ? ' ' + cls : '') + '"><b>' + h(v) + '</b><span>' + h(l) + '</span></div>'; }
+    var kpis = '<div class="kpis">' + kpi(st.passed + ' ห้อง', 'ตรวจผ่านครบวันนี้', 'ok') +
+      kpi(st.avgDone == null ? '-' : fmtMin(st.avgDone), 'ตรวจครบ 3 ขั้นเฉลี่ย') +
+      kpi(String(s.openIssues.length), 'รายการปัญหาที่ยังไม่แก้', s.openIssues.length ? 'bad' : '') +
+      kpi(st.avgFix == null ? '-' : fmtMin(st.avgFix), 'แก้ไขปัญหาเฉลี่ย' + (st.fixN ? ' (' + st.fixN + ' รายการ)' : '')) + '</div>';
+    var staffRows = st.staff.length ? st.staff.map(function (x) {
+      var rate = x.n ? Math.round((x.n - x.fails) / x.n * 100) : null;
+      return '<div class="rowline"><span class="rt"><b>' + h(x.name) + '</b><small>' + h(x.label) + ' · ' + (x.fix ? 'แก้ไข ' + x.n + ' รายการ' : 'ตรวจ ' + x.n + ' ครั้ง · พบปัญหา ' + x.fails) + '</small></span>' +
+        '<span class="rr">' + (x.fix || rate == null ? '' : 'ผ่านทันที ' + rate + '%') + '</span></div>';
+    }).join('') : '<p class="sub">วันนี้ยังไม่มีการตรวจ</p>';
+    return '<h1 class="page-h">ภาพรวมวันนี้</h1><div class="panel">' + '<div class="strip" role="img" aria-label="สัดส่วนสถานะห้อง">' + strip + '</div>' + legendHtml(s.counts) + '</div>' + kpis +
       '<div class="section"><h2>ผังห้อง<span class="sub">แตะห้องเพื่อดูรายละเอียด</span></h2>' + boardHtml() + '</div>' +
       '<div class="section grid2"><div><h2>ความคืบหน้าวันนี้</h2><div class="panel">' + rounds + '</div></div>' +
       '<div><h2>ห้องที่ค้างนานเกิน ' + OVERDUE + ' นาที</h2><div class="panel">' + overdue + '</div></div></div>' +
-      '<div class="section"><h2>ของที่พบปัญหาบ่อย<span class="sub">ย้อนหลังตามข้อมูลที่โหลดมา</span></h2><div class="panel">' + top + '</div></div>';
+      '<div class="section"><h2>ผลงานรายคนวันนี้<span class="sub">ตามข้อมูลที่โหลดมา</span></h2><div class="panel">' + staffRows + '</div></div>' +
+      '<div class="section"><h2>ของที่พบปัญหาบ่อย<span class="sub">แตะเพื่อดูว่าห้องไหน ใครพบ</span></h2><div class="panel">' + top + '</div></div>';
+  }
+  // ---------- แท็บ Dashboard (แอดมิน) ----------
+  function dashState() {
+    if (!S.dash) S.dash = { days: 7, data: null, loading: false, err: '' };
+    return S.dash;
+  }
+  function loadDash() {
+    var st = dashState(), d = st.days;
+    st.loading = true; st.err = '';
+    render();
+    Api.dashboard(d).then(function (r) {
+      if (!S.dash || S.dash.days !== d) return; // เปลี่ยนช่วงวันหรือออกจากระบบระหว่างโหลด
+      st.loading = false;
+      if (r.ok) st.data = r.data; else st.err = r.message || 'โหลดข้อมูลไม่สำเร็จ';
+      if (S.user && S.tab === 'dashboard') render();
+    });
+  }
+  function dashboardView() {
+    var st = dashState(), D = st.data;
+    var bar = '<h1 class="page-h">Dashboard</h1><div class="histbar"><div class="ftabs" style="margin:0;padding:0;flex:1" role="tablist" aria-label="ช่วงวันที่">' +
+      [7, 14, 30].map(function (n) { return '<button role="tab" data-act="dashDays" data-d="' + n + '" aria-selected="' + (st.days === n) + '">' + n + ' วัน</button>'; }).join('') +
+      '</div><button class="icon-btn dark" data-act="dashReload" aria-label="โหลดใหม่">↻</button></div>';
+    if (st.err) return bar + '<p class="sub" style="color:var(--issue-ink)">' + h(st.err) + '</p>';
+    if (!D) return bar + '<p class="sub">กำลังโหลด…</p>';
+    var T = D.totals, I = D.issues;
+    function kpi(v, l, cls) { return '<div class="kpi' + (cls ? ' ' + cls : '') + '"><b>' + h(v) + '</b><span>' + h(l) + '</span></div>'; }
+    var kpis = '<div class="kpis">' + kpi(String(T.started), 'ใบตรวจทั้งหมด') +
+      kpi(T.firstPassRate == null ? '-' : T.firstPassRate + '%', 'ผ่านตั้งแต่รอบแรก', T.firstPassRate != null && T.firstPassRate < 70 ? 'bad' : 'ok') +
+      kpi(T.avgDone == null ? '-' : fmtMin(T.avgDone), 'ตรวจครบ 3 ขั้นเฉลี่ย') +
+      kpi(I.avgFix == null ? '-' : fmtMin(I.avgFix), 'แก้ปัญหาเฉลี่ย (' + I.fixed + ' รายการ)') + '</div>';
+    // กราฟแท่งรายวัน: เขียว = ผ่านไม่มีปัญหา, แดง = เคยพบปัญหา, เทา = ยังไม่จบ
+    var max = 1; D.daily.forEach(function (x) { if (x.total > max) max = x.total; });
+    var every = D.daily.length > 14 ? 5 : D.daily.length > 7 ? 2 : 1;
+    var cols = D.daily.map(function (x, n) {
+      var seg = function (k, cls) { return x[k] ? '<i class="' + cls + '" style="height:' + (x[k] / max * 100) + '%"></i>' : ''; };
+      var lab = (n % every === 0 || n === D.daily.length - 1) ? (+x.date.slice(8)) + '/' + (+x.date.slice(5, 7)) : '';
+      return '<div class="dcol" title="' + h(x.date) + ': ' + x.total + ' ใบ"><b>' + (x.total || '') + '</b><div class="dstack">' + seg('open', 'o') + seg('issue', 'f') + seg('clean', 'p') + '</div><span>' + lab + '</span></div>';
+    }).join('');
+    var chart = '<div class="dchart" role="img" aria-label="จำนวนใบตรวจรายวัน">' + cols + '</div>' +
+      '<div class="dleg"><span><i class="p"></i>ผ่านไม่มีปัญหา ' + T.clean + '</span><span><i class="f"></i>เคยพบปัญหา ' + T.issue + '</span><span><i class="o"></i>ยังไม่จบ ' + T.open + '</span></div>';
+    // เวลาต่อขั้น: ดูว่าติดคอขวดที่ขั้นไหน
+    var maxW = 1; D.stepWait.forEach(function (x) { if (x.avg > maxW) maxW = x.avg; });
+    var waits = D.stepWait.map(function (x) {
+      return '<div class="rowline"><span class="rt"><b>ขั้น ' + x.step + ' · ' + h(x.label) + '</b><small>' + (x.n ? 'เฉลี่ย ' + h(fmtMin(x.avg)) + ' จาก ' + x.n + ' ครั้ง' : 'ยังไม่มีข้อมูล') + '</small>' +
+        '<div class="hbar"><i style="width:' + (x.avg ? x.avg / maxW * 100 : 0) + '%;background:var(--brand)"></i></div></span></div>';
+    }).join('');
+    var staff = D.staff.length ? D.staff.map(function (x) {
+      var rate = !x.fix && x.n ? Math.round((x.n - x.fails) / x.n * 100) : null;
+      return '<div class="rowline"><span class="rt"><b>' + h(x.name) + '</b><small>' + h(x.label) + ' · ' + (x.fix ? 'แก้ไข ' + x.n + ' รายการ' + (x.avgFix != null ? ' · เฉลี่ย ' + fmtMin(x.avgFix) : '') : 'ตรวจ ' + x.n + ' ครั้ง · พบปัญหา ' + x.fails) + '</small></span><span class="rr">' + (rate == null ? '' : 'ผ่านทันที ' + rate + '%') + '</span></div>';
+    }).join('') : '<p class="sub">ยังไม่มีข้อมูลในช่วงนี้</p>';
+    var maxI = D.topItems.length ? D.topItems[0].count : 1;
+    var items = D.topItems.length ? D.topItems.map(function (x) {
+      return '<button class="rowline" data-act="item" data-no="' + x.itemNo + '"><span class="rt">' + h(x.name) + '<small>พบ ' + x.count + ' ครั้งใน ' + x.roomCount + ' ห้อง (ขาด ' + x.missing + ' / ชำรุด ' + x.damaged + ')</small><div class="hbar"><i style="width:' + (x.count / maxI * 100) + '%"></i></div></span><span class="rr">›</span></button>';
+    }).join('') : '<p class="sub">ไม่มีรายการที่พบปัญหาในช่วงนี้</p>';
+    var rooms = D.topRooms.length ? D.topRooms.map(function (x) {
+      return '<button class="rowline" data-act="room" data-room="' + h(x.roomId) + '"><span class="rn">' + h(x.roomId) + '</span><span class="rt">พบปัญหา ' + x.count + ' รายการ</span><span class="rr">›</span></button>';
+    }).join('') : '<p class="sub">ไม่มี</p>';
+    return bar + '<p class="sub">ช่วง ' + h(FormImage.thaiDate(D.from)) + ' – ' + h(FormImage.thaiDate(D.to)) + (st.loading ? ' · กำลังอัปเดต…' : '') + '</p>' + kpis +
+      '<div class="section"><h2>ใบตรวจรายวัน</h2><div class="panel">' + chart + '</div></div>' +
+      '<div class="section grid2"><div><h2>เวลาเฉลี่ยต่อขั้น<span class="sub">รวมเวลารอแก้ไข</span></h2><div class="panel">' + waits + '</div></div>' +
+      '<div><h2>ปัญหาที่พบ<span class="sub">' + I.reported + ' รายการ · ขาด ' + I.missing + ' / ชำรุด ' + I.damaged + ' · ค้างอยู่ตอนนี้ ' + I.open + '</span></h2><div class="panel">' + rooms + '</div></div></div>' +
+      '<div class="section"><h2>ของที่พบปัญหาบ่อย<span class="sub">แตะเพื่อดูรายละเอียด</span></h2><div class="panel">' + items + '</div></div>' +
+      '<div class="section"><h2>ผลงานรายคน</h2><div class="panel">' + staff + '</div></div>';
+  }
+  function adminStats() {
+    var today = Core.dateOf(Date.now()), db = S.db;
+    var done = db.inspections.filter(function (i) { return i.status === 'passed' && String(i.finishedAt || i.date).slice(0, 10) === today; });
+    var durs = done.map(function (i) { return minBetween(i.startedAt, i.finishedAt); }).filter(function (x) { return x != null; });
+    var fixes = db.issues.filter(function (x) { return x.status === 'fixed' && String(x.fixedAt).slice(0, 10) === today; });
+    var fixDurs = fixes.map(function (x) { return minBetween(x.reportedAt, x.fixedAt); }).filter(function (x) { return x != null; });
+    var by = {};
+    db.steps.forEach(function (x) {
+      if (String(x.at).slice(0, 10) !== today) return;
+      var k = x.userName + '|' + x.step;
+      if (!by[k]) by[k] = { name: x.userName, step: Number(x.step), label: Core.STEP_LABEL[x.step], n: 0, fails: 0, fix: false };
+      by[k].n++; if (x.result === 'fail') by[k].fails++;
+    });
+    fixes.forEach(function (x) {
+      var k = x.fixedBy + '|fix';
+      if (!by[k]) by[k] = { name: x.fixedBy || '-', step: 9, label: 'แม่บ้าน', n: 0, fails: 0, fix: true };
+      by[k].n++;
+    });
+    var staff = Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return a.step - b.step || (a.name < b.name ? -1 : 1); });
+    return { passed: done.length, avgDone: avg(durs), avgFix: avg(fixDurs), fixN: fixDurs.length, staff: staff };
+  }
+  // รายละเอียดของที่พบปัญหาแต่ละรายการ: ห้องไหน ใครพบ เมื่อไร แก้แล้วหรือยัง
+  function openItem(no) {
+    var list = S.db.issues.filter(function (x) { return Number(x.itemNo) === Number(no); }).sort(function (a, b) { return a.reportedAt < b.reportedAt ? 1 : -1; });
+    if (!list.length) return;
+    var rows = list.map(function (x) {
+      var det = (x.kind === 'damaged' ? 'ชำรุด' : 'ขาด/สูญหาย') + ' (มี ' + x.found + ' จาก ' + x.expected + ')' + (x.note ? ' — ' + x.note : '');
+      var state = x.status === 'fixed' ? '<span class="pill ok">แก้แล้ว</span> ' + h(x.fixedBy || '') + ' ใช้เวลา ' + h(fmtMin(minBetween(x.reportedAt, x.fixedAt) || 0))
+        : '<span class="pill issue">ยังไม่แก้</span> ค้าง ' + h(fmtMin(waitMin(x.reportedAt)));
+      return '<button class="rowline" data-act="room" data-room="' + h(x.roomId) + '"><span class="rn">' + h(x.roomId) + '</span><span class="rt">' + h(det) +
+        '<small>พบโดย ' + h(x.reportedBy) + ' (ขั้น ' + x.step + ') ' + h(String(x.reportedAt).slice(5, 16)) + '</small><small>' + state + '</small></span></button>';
+    }).join('');
+    $('sheet').innerHTML = '<div class="overlay" data-act="closeSheet"><div class="sheet bottom" role="dialog" aria-modal="true"><div class="sheet-h"><h2>' + h(list[0].itemName) + '<small>พบทั้งหมด ' + list.length + ' ครั้ง</small></h2><button class="icon-btn" data-act="closeSheet" aria-label="ปิด">✕</button></div><div class="sheet-body">' + rows + '</div></div></div>';
   }
   function issuesView() {
-    var open = S.db.issues.filter(function (x) { return x.status === 'open'; });
-    var fixed = S.db.issues.filter(function (x) { return x.status === 'fixed'; }).sort(function (a, b) { return a.fixedAt < b.fixedAt ? 1 : -1; }).slice(0, 30);
+    var kf = S.issueKind || 'all';
+    function kindOk(x) { return kf === 'all' || (kf === 'damaged' ? x.kind === 'damaged' : x.kind !== 'damaged'); }
+    var open = S.db.issues.filter(function (x) { return x.status === 'open' && kindOk(x); }).sort(function (a, b) { return a.reportedAt < b.reportedAt ? -1 : 1; });
+    var fixed = S.db.issues.filter(function (x) { return x.status === 'fixed' && kindOk(x); }).sort(function (a, b) { return a.fixedAt < b.fixedAt ? 1 : -1; }).slice(0, 30);
     function row(x) {
       return '<button class="rowline" data-act="room" data-room="' + h(x.roomId) + '"><span class="rn">' + h(x.roomId) + '</span><span class="rt">' + h(x.itemName) + ' <small>มี ' + x.found + ' จาก ' + x.expected + ' (' + (x.kind === 'damaged' ? 'ชำรุด' : 'ขาด/สูญหาย') + ')' + (x.note ? ' — ' + h(x.note) : '') + '</small></span>' +
-        '<span class="rr">' + h(x.reportedBy) + '<br>' + hhmm(x.reportedAt) + ' น.</span></button>';
+        '<span class="rr">' + h(x.reportedBy) + ' · ขั้น ' + x.step + '<br>' + dt(x.reportedAt) + '<br>' +
+        (x.status === 'fixed' ? '<span style="color:var(--ready-ink)">แก้โดย ' + h(x.fixedBy || '-') + ' ' + h(fmtMin(minBetween(x.reportedAt, x.fixedAt) || 0)) + '</span>' : '<span style="color:var(--issue-ink);font-weight:600">ค้าง ' + h(fmtMin(waitMin(x.reportedAt))) + '</span>') + '</span></button>';
     }
-    return '<h1 class="page-h">รายการที่พบปัญหา</h1><div class="section" style="margin-top:0"><h2>ยังไม่แก้ไข <span class="pill ' + (open.length ? 'issue' : 'ok') + '">' + open.length + '</span></h2><div class="panel">' +
+    var chips = '<div class="ftabs" role="tablist" aria-label="กรองประเภท">' + [['all', 'ทั้งหมด'], ['missing', 'ขาด/สูญหาย'], ['damaged', 'ชำรุด']].map(function (c) {
+      return '<button role="tab" data-act="issueKind" data-k="' + c[0] + '" aria-selected="' + (kf === c[0]) + '">' + c[1] + '</button>';
+    }).join('') + '</div>';
+    return '<h1 class="page-h">รายการที่พบปัญหา</h1>' + chips + '<div class="section" style="margin-top:0"><h2>ยังไม่แก้ไข <span class="pill ' + (open.length ? 'issue' : 'ok') + '">' + open.length + '</span></h2><div class="panel">' +
       (open.length ? open.map(row).join('') : '<p class="sub">ไม่มีรายการค้าง</p>') + '</div></div>' +
       '<div class="section"><h2>แก้ไขแล้วล่าสุด</h2><div class="panel">' + (fixed.length ? fixed.map(row).join('') : '<p class="sub">ยังไม่มี</p>') + '</div></div>';
   }
@@ -332,7 +455,7 @@
       }).join(' → ') || 'ยังไม่มีผลตรวจ';
       var pill = '<span class="pill ' + stt[0] + '">' + stt[1] + (i.status === 'open' ? ' ขั้น ' + i.step : '') + '</span>';
       return '<div class="hrow"><div class="hmain"><span class="rn">' + h(i.roomId) + '</span><div class="rt">' + h(typeLabel(i)) + ' ' + pill +
-        '<small>' + who + ' · เริ่ม ' + hhmm(i.startedAt) + ' น.</small></div></div>' +
+        '<small>' + who + ' · เริ่ม ' + dt(i.startedAt, true) + '</small></div></div>' +
         '<div class="hacts"><button class="btn ghost sm" data-act="viewForm" data-insp="' + h(i.id) + '">ดูฟอร์ม</button>' +
         '<button class="btn sm" data-act="dlForm" data-insp="' + h(i.id) + '">ดาวน์โหลดรูป</button></div></div>';
     }).join('');
@@ -348,8 +471,9 @@
       '<p class="sub">ใบตรวจของวันที่เลือก กด “ดูฟอร์ม” เพื่อดูแบบฟอร์มพร้อมลายเซ็น หรือ “ดาวน์โหลดรูป” เป็นไฟล์ PNG</p>' +
       '<div class="panel" id="histList" style="margin-top:12px">' + histListHtml() + '</div>';
   }
+  function dbFor(inspId) { return Core.inspOf(S.db, inspId) ? S.db : histDb(); }
   function openFormView(inspId) {
-    var fd = Core.formData(histDb(), inspId); if (!fd) return;
+    var fd = Core.formData(dbFor(inspId), inspId); if (!fd) return;
     $('sheet').innerHTML = '<div class="overlay"><div class="sheet full" role="dialog" aria-modal="true"><div class="sheet-h"><h2>ฟอร์มตรวจห้อง ' + h(fd.roomId) +
       '<small>' + h(FormImage.thaiDate(fd.date)) + ' · ' + h(typeLabel(fd)) + '</small></h2><button class="icon-btn" data-act="closeSheet" aria-label="ปิด">✕</button></div>' +
       '<div class="sheet-body formview"><div id="fvBox"><p class="sub">กำลังสร้างรูปฟอร์ม…</p></div></div>' +
@@ -361,7 +485,7 @@
     });
   }
   function downloadForm(inspId) {
-    var fd = Core.formData(histDb(), inspId); if (!fd) return;
+    var fd = Core.formData(dbFor(inspId), inspId); if (!fd) return;
     FormImage.download(fd).then(function () { toast('บันทึกรูปแล้ว: ' + FormImage.fileName(fd)); }, function () { toast('สร้างรูปไม่สำเร็จ', 'bad'); });
   }
 
@@ -378,8 +502,17 @@
       }).join('') + '</div>';
     }
     var issues = S.db.issues.filter(function (x) { return x.roomId === room.id && x.status === 'open'; });
-    var hist = S.db.inspections.filter(function (i) { return i.roomId === room.id; }).sort(function (a, b) { return a.startedAt < b.startedAt ? 1 : -1; }).slice(0, 5).map(function (i) {
+    var isAdmin = role === 'admin';
+    var hist = S.db.inspections.filter(function (i) { return i.roomId === room.id; }).sort(function (a, b) { return a.startedAt < b.startedAt ? 1 : -1; }).slice(0, isAdmin ? 10 : 5).map(function (i) {
       var st = { open: 'กำลังตรวจ', fixing: 'รอแก้ไข', passed: 'ผ่านครบ', cancelled: 'ยกเลิก' }[i.status];
+      if (isAdmin) {
+        var ss = S.db.steps.filter(function (x) { return x.inspectionId === i.id; });
+        var nIss = S.db.issues.filter(function (x) { return x.inspectionId === i.id; }).length;
+        var line = ss.map(function (x) { return '<div>ขั้น ' + x.step + ' · ' + h(x.userName) + ' · ' + dt(x.at, true) + ' · <b style="color:' + (x.result === 'pass' ? 'var(--ready-ink)' : 'var(--issue-ink)') + '">' + (x.result === 'pass' ? 'ผ่าน' : 'พบปัญหา ' + x.failCount) + '</b>' + (x.signature ? ' ✍' : '') + '</div>'; }).join('') || '<div>ยังไม่มีผลตรวจ</div>';
+        var took = i.finishedAt ? ' · ใช้เวลารวม ' + fmtMin(minBetween(i.startedAt, i.finishedAt) || 0) : '';
+        return '<div class="h"><b>' + h(typeLabel(i)) + '</b> — ' + st + '<small>เริ่ม ' + h(String(i.startedAt).slice(5, 16)) + (i.finishedAt ? ' จบ ' + h(String(i.finishedAt).slice(11, 16)) : '') + took + (nIss ? ' · พบปัญหา ' + nIss + ' รายการ' : '') + '</small>' +
+          '<div class="tl">' + line + '</div><button class="btn ghost sm" data-act="viewForm" data-insp="' + h(i.id) + '">ดูฟอร์ม</button></div>';
+      }
       return '<div class="h"><b>' + (i.type === 'checkout' ? 'หลังแขกออก' : Core.ROUNDS[i.round]) + '</b> — ' + st + '<small>เริ่ม ' + h(String(i.startedAt).slice(5, 16)) + (i.finishedAt ? ' จบ ' + h(String(i.finishedAt).slice(11, 16)) : '') + '</small></div>';
     }).join('');
     var acts = '';
@@ -406,7 +539,7 @@
       var strokes = [], cur = null, dlg = $('dialog');
       dlg.innerHTML = '<div class="dialog" role="dialog" aria-modal="true" aria-label="เซ็นชื่อยืนยัน"><div class="box signbox">' +
         '<h3>เซ็นชื่อยืนยันผลการตรวจ</h3><p class="sub">' + h(info.text) + '</p>' +
-        '<div class="signwho">' + h(ROLE[S.user.role]) + ' · ' + hhmm(Core.stamp(Date.now())) + ' น.</div>' +
+        '<div class="signwho">' + h(ROLE[S.user.role]) + ' · ' + dt(Core.stamp(Date.now()), true) + '</div>' +
         '<label class="signname"><span>ชื่อ-นามสกุลผู้ตรวจ</span><input id="sigName" type="text" maxlength="60" autocomplete="name" placeholder="พิมพ์ชื่อ-นามสกุล" value="' + h(S.user.name) + '"></label>' +
         '<div class="sigframe"><canvas id="sigCv" width="640" height="240" aria-label="ช่องเซ็นชื่อ เซ็นด้วยนิ้วหรือปากกา"></canvas><span class="sigline" id="sigHint">เซ็นชื่อในกรอบนี้</span></div>' +
         '<div class="acts"><button class="btn ghost" data-s="cancel">ยกเลิก</button><button class="btn ghost" data-s="clear">ล้าง</button><button class="btn" data-s="ok" disabled>ยืนยัน ส่งผล</button></div></div></div>';
@@ -465,14 +598,40 @@
   }
 
   // ---------- ฟอร์มตรวจ 25 รายการ ----------
+  function draftKey(id) { return 'rc-draft:' + (S.user ? S.user.id : '') + ':' + id; }
+  function saveDraft() {
+    if (!F) return;
+    try {
+      if (Object.keys(F.items).length) localStorage.setItem(draftKey(F.inspId), JSON.stringify({ step: F.step, items: F.items }));
+      else localStorage.removeItem(draftKey(F.inspId));
+    } catch (e) { /* เก็บร่างไม่ได้ ก็ใช้งานต่อได้ตามปกติ */ }
+  }
+  function clearDraft(id) { try { localStorage.removeItem(draftKey(id)); } catch (e) { /* ignore */ } }
+  function loadDraft(id, step) {
+    try {
+      var d = JSON.parse(localStorage.getItem(draftKey(id)) || 'null');
+      if (!d || Number(d.step) !== Number(step) || !d.items) return null;
+      var out = {};
+      Object.keys(d.items).forEach(function (k) {
+        var it = d.items[k], item = formItem(k);
+        if (!item || !it) return;
+        if (it.ok) out[k] = { ok: true };
+        else if (it.fail) out[k] = { fail: true, kind: it.kind === 'damaged' ? 'damaged' : 'missing', found: Math.max(0, Math.min(Number(item.qty) - 1, Number(it.found) || 0)), note: String(it.note || '').slice(0, 200) };
+      });
+      return Object.keys(out).length ? out : null;
+    } catch (e) { return null; }
+  }
   function openForm(inspId) {
     var insp = Core.inspOf(S.db, inspId); if (!insp || insp.status !== 'open') { toast('ใบตรวจนี้ไม่ได้รอคุณแล้ว', 'bad'); refresh(false); return; }
     var re = Core.recheckList(insp), prev = {};
     S.db.issues.forEach(function (x) { if (x.inspectionId === inspId && re.indexOf(x.itemNo) >= 0) prev[x.itemNo] = x; });
-    F = { inspId: inspId, step: Number(insp.step), room: insp.roomId, recheck: re, prev: prev, showAll: false, items: {} };
+    F = { inspId: inspId, step: Number(insp.step), room: insp.roomId, recheck: re, prev: prev, showAll: false, items: {}, tried: false };
+    var dr = loadDraft(inspId, F.step);
+    if (dr) { F.items = dr; toast('กู้คืนผลที่ติ๊กไว้ ' + Object.keys(dr).length + ' รายการ'); }
     renderForm();
   }
   function renderForm(keepScroll) {
+    saveDraft();
     var body = document.querySelector('#sheet .sheet-body'), y = body ? body.scrollTop : 0;
     var insp = Core.inspOf(S.db, F.inspId), items = S.db.items;
     var fails = Object.keys(F.items).filter(function (k) { return F.items[k].fail; }).length;
@@ -492,8 +651,8 @@
           (qty > 1 ? '<div class="row"><span class="lbl">เหลืออยู่</span><span class="step-n"><button data-act="found" data-no="' + it.no + '" data-d="-1" aria-label="ลด">−</button><output>' + st.found + ' / ' + qty + '</output><button data-act="found" data-no="' + it.no + '" data-d="1" aria-label="เพิ่ม">+</button></span></div>' : '') +
           '<div class="row"><span class="lbl">หมายเหตุ</span><input type="text" maxlength="200" data-note="' + it.no + '" value="' + h(st.note) + '" placeholder="เช่น แก้วแตก 1 ใบ"></div></div>';
       }
-      var okk = st && st.ok;
-      return '<div class="it' + (fail ? ' fail' : okk ? ' ok' : '') + '"><div class="it-main"><span class="it-no">' + it.no + '</span><span class="it-name">' + h(it.name) + '<small>มาตรฐาน ' + qty + ' ชิ้น' + (p ? ' — ครั้งก่อน: ' + h(p.note || (p.kind === 'damaged' ? 'ชำรุด' : 'ขาด')) : '') + '</small></span>' +
+      var okk = st && st.ok, need = F.tried && !st;
+      return '<div class="it' + (fail ? ' fail' : okk ? ' ok' : need ? ' need' : '') + '"><div class="it-main"><span class="it-no">' + it.no + '</span><span class="it-name">' + h(it.name) + '<small>มาตรฐาน ' + qty + ' ชิ้น' + (p ? ' — ครั้งก่อน: ' + h(p.note || (p.kind === 'damaged' ? 'ชำรุด' : 'ขาด')) : '') + '</small></span>' +
         '<span class="marks" role="group" aria-label="ผลตรวจรายการ ' + it.no + '"><button class="mk mk-ok" data-act="mark" data-no="' + it.no + '" data-v="ok" aria-pressed="' + !!okk + '" aria-label="ครบ">' + (okk ? '✓' : '') + '</button>' +
         '<button class="mk mk-fail" data-act="mark" data-no="' + it.no + '" data-v="fail" aria-pressed="' + !!fail + '" aria-label="พบปัญหา">' + (fail ? '✗' : '') + '</button></span></div>' + more + '</div>';
     }).join('');
@@ -501,9 +660,9 @@
     var more = rc ? '<p style="margin-top:12px"><button class="link-btn" data-act="showAll">' + (F.showAll ? 'ซ่อนรายการอื่น' : 'ตรวจรายการอื่นด้วย') + '</button></p>' : '';
     var label = left ? 'ยังไม่ได้ติ๊ก ' + left + ' รายการ' : fails ? 'บันทึกพบปัญหา ' + fails + ' รายการ' : (step < 3 ? 'ผ่าน ส่งต่อให้' + Core.STEP_LABEL[step + 1] : 'ผ่าน ห้องพร้อมขาย');
     $('sheet').innerHTML = '<div class="overlay"><div class="sheet full" role="dialog" aria-modal="true"><div class="sheet-h"><h2>ห้อง ' + h(F.room) + '<small>ตรวจขั้นที่ ' + step + ' โดย' + h(Core.STEP_LABEL[step]) + (insp.type === 'checkout' ? ' (หลังแขกออก)' : ' (' + h(Core.ROUNDS[insp.round]) + ')') + '</small></h2><button class="icon-btn" data-act="closeForm" aria-label="ปิดโดยไม่บันทึก">✕</button></div>' +
-      '<div class="sheet-body">' + stepsBar + note + '<div class="items">' + list + '</div>' + more + signHint + '</div>' +
+      '<div class="sheet-body"><div class="fprog" role="status"><div class="fprog-bar"><span style="width:' + (vis.length ? Math.round(marked / vis.length * 100) : 0) + '%"></span></div><b>ติ๊กแล้ว ' + marked + '/' + vis.length + '</b>' + (left ? '<span>เหลือ ' + left + '</span>' : '<span class="done">ครบแล้ว</span>') + '</div>' + stepsBar + note + '<div class="items">' + list + '</div>' + more + signHint + '</div>' +
       '<div class="sheet-foot"><span class="count' + (fails ? ' bad' : '') + '">' + ('ติ๊กแล้ว ' + marked + '/' + vis.length + (fails ? ' · พบปัญหา ' + fails : '')) + '</span>' +
-      '<button class="btn' + (fails ? ' danger' : '') + '" data-act="submitForm"' + (S.busy || left ? ' disabled' : '') + '>' + h(label) + '</button></div></div></div>';
+      '<button class="btn' + (fails ? ' danger' : '') + '" data-act="submitForm"' + (S.busy ? ' disabled' : '') + (left ? ' aria-disabled="true"' : '') + '>' + h(label) + '</button></div></div></div>';
     var nb = document.querySelector('#sheet .sheet-body'); if (nb && keepScroll !== false) nb.scrollTop = y;
   }
   function formItem(no) { return S.db.items.filter(function (i) { return Number(i.no) === Number(no); })[0]; }
@@ -519,7 +678,12 @@
     renderForm();
   }
   function submitForm() {
-    if (visibleItems().some(function (it) { return !F.items[it.no]; })) { toast('ยังติ๊กไม่ครบทุกรายการ', 'bad'); return; }
+    if (visibleItems().some(function (it) { return !F.items[it.no]; })) {
+      F.tried = true; renderForm();
+      var first = document.querySelector('#sheet .it.need');
+      if (first && first.scrollIntoView) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      toast('ยังติ๊กไม่ครบ กรอบสีแดงคือรายการที่ยังว่าง', 'bad'); return;
+    }
     var failures = Object.keys(F.items).filter(function (k) { return F.items[k].fail; }).map(function (k) {
       return { itemNo: Number(k), kind: F.items[k].kind, found: F.items[k].found, note: F.items[k].note };
     });
@@ -528,6 +692,7 @@
     openSign({ text: 'ห้อง ' + room + ' · ตรวจขั้นที่ ' + step + ' · ' + (failures.length ? 'พบปัญหา ' + failures.length + ' รายการ' : 'ครบทุกรายการ') }).then(function (sg) {
       if (!sg) return;
       run('submitStep', { inspectionId: inspId, step: step, failures: failures, signature: sg.sig, signName: sg.name }, function (res) {
+        clearDraft(inspId);
         closeSheet();
         if (res.queued) return;
         var r = res.result || {};
@@ -616,13 +781,17 @@
     demoReset: function () { ask('เริ่มข้อมูลทดลองใหม่ทั้งหมดหรือไม่?', 'เริ่มใหม่').then(function (y) { if (y) { Api.demoReset(); S.seen = null; refresh(false); toast('เริ่มข้อมูลทดลองใหม่แล้ว'); } }); },
     reload: function () { refresh(true).then(function () { toast('ข้อมูลล่าสุดแล้ว'); }); },
     logout: function () { doLogout(); },
-    tab: function (el) { S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); if (S.tab === 'history') loadHist(); },
+    tab: function (el) { S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); if (S.tab === 'history') loadHist(); if (S.tab === 'dashboard') loadDash(); },
     histDay: function (el) {
       var st = histState(), p = st.date.split('-').map(Number), today = Core.dateOf(Date.now());
       var nd = new Date(Date.UTC(p[0], p[1] - 1, p[2] + Number(el.dataset.d))).toISOString().slice(0, 10);
       if (nd > today) return; st.date = nd; loadHist();
     },
     histReload: function () { loadHist(); },
+    dashDays: function (el) { dashState().days = Number(el.dataset.d); loadDash(); },
+    dashReload: function () { loadDash(); },
+    item: function (el) { openItem(el.dataset.no); },
+    issueKind: function (el) { S.issueKind = el.dataset.k; render(); },
     viewForm: function (el) { openFormView(el.dataset.insp); },
     dlForm: function (el) { downloadForm(el.dataset.insp); },
     floorTab: function (el) { S.floorTab = el.dataset.floor === 'all' ? 'all' : Number(el.dataset.floor); render(); },
@@ -679,8 +848,8 @@
     submitForm: function () { submitForm(); },
     closeForm: function () {
       var any = Object.keys(F.items).length;
-      if (!any) return closeSheet();
-      ask('ปิดโดยไม่บันทึกผลที่ติ๊กไว้?', 'ปิดโดยไม่บันทึก', true).then(function (y) { if (y) closeSheet(); });
+      saveDraft(); closeSheet();
+      if (any) toast('เก็บผลที่ติ๊กไว้แล้ว เปิดห้องนี้อีกครั้งเพื่อติ๊กต่อ');
     }
   };
 
@@ -701,7 +870,7 @@
   document.addEventListener('input', function (e) {
     if (e.target.id === 'histQ') { histState().q = e.target.value; var L = $('histList'); if (L) L.innerHTML = histListHtml(); return; }
     var n = e.target.getAttribute && e.target.getAttribute('data-note');
-    if (n && F && F.items[n]) F.items[n].note = e.target.value;
+    if (n && F && F.items[n]) { F.items[n].note = e.target.value; saveDraft(); }
   });
   document.addEventListener('pointerdown', function () { try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (er) { /* ignore */ } }, { once: true });
   window.addEventListener('online', function () { tick(); });
