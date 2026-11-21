@@ -2,7 +2,7 @@
 window.APP_CONFIG = {
   // ใส่ URL ของ Apps Script Web App (ลงท้าย /exec) เพื่อต่อ Google Sheet จริง
   // เว้นว่างไว้ = โหมดทดลอง (ข้อมูลจำลอง เก็บในเครื่องนี้เท่านั้น)
-  API_URL: 'https://script.google.com/macros/s/AKfycbztpFyAAaIxaQlz0kGn6Cl7OcsJz38NZzM5ZEIWOiFZT-4-YoaDMhI8XJCtv1P-JWTp6w/exec',
+  API_URL: 'https://script.google.com/macros/s/AKfycbyD_IXx9RhJD-Ul2hITxNS-5piECz0ElBOBj3A6edL7J6Cwxx_CAkIwgVB9fc8ktd5i4w/exec',
 
   HOTEL_NAME: 'โรงแรมของเรา',
 
