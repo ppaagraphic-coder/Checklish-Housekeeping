@@ -477,11 +477,12 @@
     var insp = Core.inspOf(S.db, F.inspId), items = S.db.items;
     var fails = Object.keys(F.items).filter(function (k) { return F.items[k].fail; }).length;
     var step = F.step, rc = F.recheck.length > 0;
+    var vis = visibleItems(), marked = vis.filter(function (it) { return F.items[it.no]; }).length, left = vis.length - marked;
     var stepsBar = '<div class="steps">' + [1, 2, 3].map(function (n) {
       return '<div class="' + (n < step ? 'done' : n === step ? 'now' : '') + '">' + n + '. ' + h(Core.STEP_LABEL[n]) + '</div>';
     }).join('') + '</div>';
     var note = rc && !F.showAll ? '<div class="note-box">ตรวจซ้ำเฉพาะรายการที่เคยพบปัญหา ' + F.recheck.length + ' รายการ ที่แม่บ้านแก้ไขแล้ว รายการอื่นผ่านไปแล้วจึงไม่ต้องตรวจใหม่</div>' : '';
-    var list = items.filter(function (it) { return !rc || F.showAll || F.recheck.indexOf(Number(it.no)) >= 0; }).map(function (it) {
+    var list = vis.map(function (it) {
       var st = F.items[it.no], fail = st && st.fail, qty = Number(it.qty), p = F.prev[it.no];
       var more = '';
       if (fail) {
@@ -491,24 +492,34 @@
           (qty > 1 ? '<div class="row"><span class="lbl">เหลืออยู่</span><span class="step-n"><button data-act="found" data-no="' + it.no + '" data-d="-1" aria-label="ลด">−</button><output>' + st.found + ' / ' + qty + '</output><button data-act="found" data-no="' + it.no + '" data-d="1" aria-label="เพิ่ม">+</button></span></div>' : '') +
           '<div class="row"><span class="lbl">หมายเหตุ</span><input type="text" maxlength="200" data-note="' + it.no + '" value="' + h(st.note) + '" placeholder="เช่น แก้วแตก 1 ใบ"></div></div>';
       }
-      return '<div class="it' + (fail ? ' fail' : '') + '"><button class="it-main" data-act="toggle" data-no="' + it.no + '" aria-pressed="' + !!fail + '"><span class="it-no">' + it.no + '</span><span class="it-name">' + h(it.name) + '<small>มาตรฐาน ' + qty + ' ชิ้น' + (p ? ' — ครั้งก่อน: ' + h(p.note || (p.kind === 'damaged' ? 'ชำรุด' : 'ขาด')) : '') + '</small></span><span class="mark">' + (fail ? '✗' : '✓') + '</span></button>' + more + '</div>';
+      var okk = st && st.ok;
+      return '<div class="it' + (fail ? ' fail' : okk ? ' ok' : '') + '"><div class="it-main"><span class="it-no">' + it.no + '</span><span class="it-name">' + h(it.name) + '<small>มาตรฐาน ' + qty + ' ชิ้น' + (p ? ' — ครั้งก่อน: ' + h(p.note || (p.kind === 'damaged' ? 'ชำรุด' : 'ขาด')) : '') + '</small></span>' +
+        '<span class="marks" role="group" aria-label="ผลตรวจรายการ ' + it.no + '"><button class="mk mk-ok" data-act="mark" data-no="' + it.no + '" data-v="ok" aria-pressed="' + !!okk + '" aria-label="ครบ">' + (okk ? '✓' : '') + '</button>' +
+        '<button class="mk mk-fail" data-act="mark" data-no="' + it.no + '" data-v="fail" aria-pressed="' + !!fail + '" aria-label="พบปัญหา">' + (fail ? '✗' : '') + '</button></span></div>' + more + '</div>';
     }).join('');
-    var signHint = '<p class="sub" style="margin-top:14px">เช็กครบแล้วกดปุ่มด้านล่าง จะมีช่องให้เซ็นชื่อยืนยันผลการตรวจก่อนส่ง</p>';
+    var signHint = '<p class="sub" style="margin-top:14px">ติ๊กให้ครบทุกรายการ (✓ = ครบ, ✗ = พบปัญหา) แล้วกดปุ่มด้านล่าง จะมีช่องให้เซ็นชื่อยืนยันผลการตรวจก่อนส่ง</p>';
     var more = rc ? '<p style="margin-top:12px"><button class="link-btn" data-act="showAll">' + (F.showAll ? 'ซ่อนรายการอื่น' : 'ตรวจรายการอื่นด้วย') + '</button></p>' : '';
-    var label = fails ? 'บันทึกพบปัญหา ' + fails + ' รายการ' : (step < 3 ? 'ผ่าน ส่งต่อให้' + Core.STEP_LABEL[step + 1] : 'ผ่าน ห้องพร้อมขาย');
+    var label = left ? 'ยังไม่ได้ติ๊ก ' + left + ' รายการ' : fails ? 'บันทึกพบปัญหา ' + fails + ' รายการ' : (step < 3 ? 'ผ่าน ส่งต่อให้' + Core.STEP_LABEL[step + 1] : 'ผ่าน ห้องพร้อมขาย');
     $('sheet').innerHTML = '<div class="overlay"><div class="sheet full" role="dialog" aria-modal="true"><div class="sheet-h"><h2>ห้อง ' + h(F.room) + '<small>ตรวจขั้นที่ ' + step + ' โดย' + h(Core.STEP_LABEL[step]) + (insp.type === 'checkout' ? ' (หลังแขกออก)' : ' (' + h(Core.ROUNDS[insp.round]) + ')') + '</small></h2><button class="icon-btn" data-act="closeForm" aria-label="ปิดโดยไม่บันทึก">✕</button></div>' +
       '<div class="sheet-body">' + stepsBar + note + '<div class="items">' + list + '</div>' + more + signHint + '</div>' +
-      '<div class="sheet-foot"><span class="count' + (fails ? ' bad' : '') + '">' + (rc && !F.showAll ? 'ตรวจซ้ำ ' + F.recheck.length : 'ครบ ' + (items.length - fails) + '/' + items.length) + '</span>' +
-      '<button class="btn' + (fails ? ' danger' : '') + '" data-act="submitForm"' + (S.busy ? ' disabled' : '') + '>' + h(label) + '</button></div></div></div>';
+      '<div class="sheet-foot"><span class="count' + (fails ? ' bad' : '') + '">' + ('ติ๊กแล้ว ' + marked + '/' + vis.length + (fails ? ' · พบปัญหา ' + fails : '')) + '</span>' +
+      '<button class="btn' + (fails ? ' danger' : '') + '" data-act="submitForm"' + (S.busy || left ? ' disabled' : '') + '>' + h(label) + '</button></div></div></div>';
     var nb = document.querySelector('#sheet .sheet-body'); if (nb && keepScroll !== false) nb.scrollTop = y;
   }
   function formItem(no) { return S.db.items.filter(function (i) { return Number(i.no) === Number(no); })[0]; }
-  function formToggle(no) {
-    if (F.items[no] && F.items[no].fail) { delete F.items[no]; }
-    else { var qty = Number(formItem(no).qty); F.items[no] = { fail: true, kind: 'missing', found: 0, note: '' }; }
+  function visibleItems() {
+    var rc = F.recheck.length > 0;
+    return S.db.items.filter(function (it) { return !rc || F.showAll || F.recheck.indexOf(Number(it.no)) >= 0; });
+  }
+  // เริ่มต้นเป็นช่องว่าง: กด ✓ = ครบ, กด ✗ = พบปัญหา, กดซ้ำที่เดิม = ล้างกลับเป็นช่องว่าง
+  function formMark(no, v) {
+    var cur = F.items[no];
+    if (v === 'ok') { if (cur && cur.ok) delete F.items[no]; else F.items[no] = { ok: true }; }
+    else { if (cur && cur.fail) delete F.items[no]; else F.items[no] = { fail: true, kind: 'missing', found: 0, note: '' }; }
     renderForm();
   }
   function submitForm() {
+    if (visibleItems().some(function (it) { return !F.items[it.no]; })) { toast('ยังติ๊กไม่ครบทุกรายการ', 'bad'); return; }
     var failures = Object.keys(F.items).filter(function (k) { return F.items[k].fail; }).map(function (k) {
       return { itemNo: Number(k), kind: F.items[k].kind, found: F.items[k].found, note: F.items[k].note };
     });
@@ -658,7 +669,7 @@
       });
     },
     // ฟอร์มตรวจ
-    toggle: function (el) { formToggle(el.dataset.no); },
+    mark: function (el) { formMark(el.dataset.no, el.dataset.v); },
     kind: function (el) { F.items[el.dataset.no].kind = el.dataset.kind; renderForm(); },
     found: function (el) {
       var st = F.items[el.dataset.no], max = Number(formItem(el.dataset.no).qty) - 1;

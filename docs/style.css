@@ -181,12 +181,16 @@ button.rowline { background: none; border-left: 0; border-right: 0; border-botto
 .items { display: grid; gap: 10px; grid-template-columns: 1fr; }
 .it { background: var(--card); border: 1.5px solid var(--line); border-radius: 14px; overflow: hidden; }
 .it.fail { border-color: var(--issue); }
+.it.ok { border-color: #9CD3B3; }
 .it-main { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 8px 12px; border: 0; background: none; text-align: left; }
 .it-no { flex: none; width: 26px; color: var(--mute); font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; }
 .it-name { flex: 1; font-size: 17px; font-weight: 500; line-height: 1.3; }
 .it-name small { display: block; font-size: 13px; color: var(--mute); font-weight: 400; }
-.mark { flex: none; width: 56px; height: 44px; border-radius: 12px; display: grid; place-items: center; font-size: 24px; font-weight: 700; background: var(--ready-t); color: var(--ready-ink); }
-.it.fail .mark { background: var(--issue); color: #fff; }
+.marks { flex: none; display: flex; gap: 8px; }
+.mk { width: 52px; height: 48px; border-radius: 12px; border: 2px solid var(--line); background: #fff; display: grid; place-items: center; font-size: 26px; font-weight: 700; line-height: 1; color: transparent; }
+.mk-ok[aria-pressed=true] { background: var(--ready-t); border-color: var(--ready); color: var(--ready-ink); }
+.mk-fail[aria-pressed=true] { background: var(--issue); border-color: var(--issue); color: #fff; }
+.btn:disabled { opacity: .55; }
 .it-more { padding: 4px 12px 12px; border-top: 1px dashed #E7B4AF; background: #FFF8F7; }
 .it-more .row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 .it-more .lbl { font-size: 14px; color: var(--ink2); min-width: 74px; }
