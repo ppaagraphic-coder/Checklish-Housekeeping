@@ -287,7 +287,13 @@ var Core = (function () {
     return !!p && p.length >= 40;
   }
 
-  function submitStepOne(db, ctx, inspectionId, expectStep, failuresIn, out, signature) {
+  // ชื่อที่ผู้ตรวจพิมพ์ตอนเซ็น (ไม่ใส่ = ใช้ชื่อบัญชี) ตัดช่องว่างซ้ำ จำกัด 60 ตัวอักษร กันขึ้นต้นด้วย = + - @ (ไม่ให้ชีตตีความเป็นสูตร)
+  function cleanName(n, fallback) {
+    var s = String(n == null ? '' : n).replace(/\s+/g, ' ').replace(/^[=+\-@\s]+/, '').trim().slice(0, 60);
+    return s || fallback;
+  }
+
+  function submitStepOne(db, ctx, inspectionId, expectStep, failuresIn, out, signature, signName) {
     var insp = mustInsp(db, inspectionId);
     var room = mustRoom(db, insp.roomId);
     if (insp.status === 'fixing') throw err('NEEDS_FIX', 'ห้อง ' + room.id + ' มีรายการที่ต้องแก้ไขก่อน');
@@ -303,7 +309,7 @@ var Core = (function () {
     var now = stamp(ctx.nowMs);
 
     var rec = {
-      inspectionId: insp.id, step: step, userId: ctx.user.id, userName: ctx.user.name, at: now,
+      inspectionId: insp.id, step: step, userId: ctx.user.id, userName: cleanName(signName, ctx.user.name), at: now,
       okCount: total - fails.length, failCount: fails.length,
       result: fails.length ? 'fail' : 'pass', mode: recheck ? 'recheck' : 'check', signature: signature
     };
@@ -355,7 +361,7 @@ var Core = (function () {
 
   // ส่งผลตรวจ 1 ขั้น — p.failures = [{itemNo, kind, found, note}] (ว่าง = ครบทุกรายการ)
   H.submitStep = function (db, ctx, p, out) {
-    out.result = submitStepOne(db, ctx, p.inspectionId, p.step, p.failures, out, p.signature);
+    out.result = submitStepOne(db, ctx, p.inspectionId, p.step, p.failures, out, p.signature, p.signName);
   };
 
   // ผ่านหลายห้องพร้อมกัน (ไม่มีรายการ ✗) — p.items = [{inspectionId, step}]
@@ -366,7 +372,7 @@ var Core = (function () {
     (p.items || []).forEach(function (it) {
       var msg = tryEach(function () {
         // ตรวจสิทธิ์ก่อนแตะข้อมูล (submitStepOne ตรวจให้อยู่แล้ว)
-        submitStepOne(db, ctx, it.inspectionId, it.step, [], out, p.signature);
+        submitStepOne(db, ctx, it.inspectionId, it.step, [], out, p.signature, p.signName);
         passed.push(it.inspectionId);
       });
       if (msg) skipped.push({ inspectionId: it.inspectionId, message: msg });
