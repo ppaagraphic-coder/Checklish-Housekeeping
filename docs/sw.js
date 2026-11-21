@@ -1,9 +1,12 @@
 // Service worker แบบเบา: เปิดแอปได้แม้สัญญาณหลุด (network-first เพื่อไม่ให้ได้โค้ดเก่าค้าง)
-var CACHE = 'room-check-v6';
+var CACHE = 'room-check-v7';
 var FILES = ['./', 'index.html', 'style.css', 'config.js', 'core.js', 'demo.js', 'api.js', 'form.js', 'form-header.png', 'app.js', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));
+  // cache ทีละไฟล์ ถ้าไฟล์ใดหาย (404) ก็ข้ามไป ไม่ให้การติดตั้ง service worker ล้มทั้งชุด (เดิมใช้ addAll ทำให้ SW ใหม่ไม่เคยติดตั้ง แอปเลยค้างโค้ดเก่า)
+  e.waitUntil(caches.open(CACHE).then(function (c) {
+    return Promise.all(FILES.map(function (f) { return c.add(f).catch(function () { /* ข้ามไฟล์ที่ไม่มี */ }); }));
+  }).then(function () { return self.skipWaiting(); }));
 });
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (keys) {
