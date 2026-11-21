@@ -111,7 +111,7 @@ test('batch: คำสั่งหลังเห็นผลของคำส�
   batch(g, front, [op('a', 'checkin', { roomId: '101' }), op('b', 'checkout', { roomId: '101' })]);
   const r = batch(g, maid01, [
     op('c', 'cleaned', { roomId: '101', idSeed: 'zz1' }),
-    op('d', 'submitStep', { inspectionId: 'I-101-zz1', step: 1, failures: [] })
+    op('d', 'submitStep', { signature: '320x120|20,80,60,30,100,90,150,25,210,95,290,40', inspectionId: 'I-101-zz1', step: 1, failures: [] })
   ]);
   assert.deepEqual(r.results.map((x) => x.ok), [true, true], JSON.stringify(r.results));
   const insp = g.sheets.Inspections._rows[1];
@@ -274,4 +274,68 @@ test('api: flush เจอคำสั่งที่เซิร์ฟเวอ
   assert.equal(r.sent, 2);
   assert.equal(r.dropped.length, 1);
   assert.equal(c.Api.pending(), 0);
+});
+
+// ---------------------------------------------------------------------------
+// ลายเซ็นในฝั่ง Apps Script
+// ---------------------------------------------------------------------------
+const SIGN = '320x120|20,80,60,30,100,90,150,25,210,95,290,40';
+const head = U('head', 'head_maid');
+const admin = U('admin', 'admin');
+const sigOf = (g) => g.sheets.Steps._rows[1][g.Core.SCHEMA.Steps.cols.indexOf('signature')];
+
+function oneSigned(g) {
+  batch(g, front, [op('a', 'checkin', { roomId: '101' }), op('b', 'checkout', { roomId: '101' })]);
+  return batch(g, maid01, [
+    op('c', 'cleaned', { roomId: '101', idSeed: 'zz1' }),
+    op('d', 'submitStep', { inspectionId: 'I-101-zz1', step: 1, failures: [], signature: SIGN })
+  ]);
+}
+
+test('ลายเซ็น: ไม่เซ็นในชุดคำสั่ง → ข้ามเฉพาะคำสั่งนั้น ที่เหลือทำต่อ', () => {
+  const g = makeGas();
+  batch(g, front, [op('a', 'checkin', { roomId: '101' }), op('b', 'checkout', { roomId: '101' })]);
+  const r = batch(g, maid01, [
+    op('c', 'cleaned', { roomId: '101', idSeed: 'zz1' }),
+    op('d', 'submitStep', { inspectionId: 'I-101-zz1', step: 1, failures: [] })
+  ]);
+  assert.deepEqual(r.results.map((x) => x.ok), [true, false]);
+  assert.equal(r.results[1].code, 'NEED_SIGN');
+  assert.equal(g.sheets.Steps._rows.length, 1, 'ไม่มีแถวผลตรวจ');
+});
+
+test('ลายเซ็น: เขียนลงคอลัมน์ signature ของชีต Steps', () => {
+  const g = makeGas();
+  const r = oneSigned(g);
+  assert.deepEqual(r.results.map((x) => x.ok), [true, true]);
+  assert.equal(g.sheets.Steps._rows.length, 2);
+  assert.equal(sigOf(g), SIGN);
+  assert.equal(g.Core.SCHEMA.Steps.cols[g.Core.SCHEMA.Steps.cols.length - 1], 'signature');
+});
+
+test('ลายเซ็น: ข้อมูลหลัก (state) ไม่แบกลายเซ็น แค่ธงว่าเซ็นแล้ว', () => {
+  const g = makeGas();
+  oneSigned(g);
+  const st = JSON.parse(JSON.stringify(g.ctx.state_(admin)));
+  assert.equal(st.db.steps.length, 1);
+  assert.equal(st.db.steps[0].signature, undefined);
+  assert.equal(st.db.steps[0].signed, 1);
+  assert.ok(JSON.stringify(st).indexOf(SIGN) < 0);
+});
+
+test('history_: เฉพาะแอดมิน ได้ใบตรวจของวันนั้นพร้อมลายเซ็น', () => {
+  const g = makeGas();
+  oneSigned(g);
+  const today = g.Core.dateOf(Date.now());
+  assert.equal(g.ctx.history_(head, { date: today }).code, 'FORBIDDEN');
+  assert.equal(g.ctx.history_(maid01, { date: today }).code, 'FORBIDDEN');
+  const h = JSON.parse(JSON.stringify(g.ctx.history_(admin, { date: today })));
+  assert.equal(h.ok, true);
+  assert.equal(h.inspections.length, 1);
+  assert.equal(h.steps.length, 1);
+  assert.equal(h.steps[0].signature, SIGN);
+  const other = JSON.parse(JSON.stringify(g.ctx.history_(admin, { date: '2020-01-01' })));
+  assert.deepEqual([other.inspections.length, other.steps.length, other.issues.length], [0, 0, 0]);
+  // วันที่ผิดรูปแบบ → ใช้วันนี้ ไม่ใช่ error
+  assert.equal(g.ctx.history_(admin, { date: 'x' }).date, today);
 });

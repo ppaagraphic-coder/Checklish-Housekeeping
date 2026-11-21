@@ -12,6 +12,7 @@ var TOKEN_HOURS = 12;
 var MAX_FAILS = 5;                 // ใส่ PIN ผิดกี่ครั้งถึงล็อก
 var LOCK_SECONDS = 300;            // ล็อกกี่วินาที
 var TAIL = { Inspections: 400, Steps: 1000, Issues: 1000 }; // อ่านเฉพาะแถวท้าย ๆ ให้เร็วเมื่อข้อมูลสะสมหลายปี
+var HISTORY_TAIL = { Inspections: 4000, Steps: 15000, Issues: 8000 }; // ประวัติย้อนหลัง (ราว 1–2 เดือน)
 var USER_CACHE_SECONDS = 60;      // จำรายชื่อผู้ใช้ไว้กี่วินาที (แก้ชีต Users แล้วมีผลภายในเวลานี้)
 // แต่ละคำสั่งอ่านเฉพาะชีตที่ต้องใช้ — เร็วกว่าอ่านทุกชีตทุกครั้งมาก
 var NEED = {
@@ -55,6 +56,7 @@ function route_(req) {
   if (req.action === 'ping') return { ok: true, ver: version_() };
   if (req.action === 'state') return state_(user);
   if (req.action === 'batch') return batch_(user, req);
+  if (req.action === 'history') return history_(user, req);
   return act_(user, req);
 }
 
@@ -347,7 +349,13 @@ function buildFull_() {
     rooms: db.rooms, items: db.items,
     users: db.users.filter(function (u) { return u.active === 1; }).map(publicUser_),
     inspections: insp,
-    steps: db.steps.filter(function (s) { return ids[s.inspectionId]; }),
+    // ลายเซ็นไม่ส่งไปกับข้อมูลหลัก (ใหญ่ ทำให้โหลดช้า) ส่งแค่ธงว่าเซ็นแล้ว — แอดมินดึงลายเซ็นตอนเปิดดูฟอร์มผ่าน history_
+    steps: db.steps.filter(function (s) { return ids[s.inspectionId]; }).map(function (s) {
+      var c = {};
+      Object.keys(s).forEach(function (k) { if (k !== 'signature') c[k] = s[k]; });
+      c.signed = s.signature ? 1 : 0;
+      return c;
+    }),
     issues: db.issues.filter(function (x) { return ids[x.inspectionId] || String(x.reportedAt).slice(0, 10) >= cutIssue; })
   };
 }
@@ -388,6 +396,22 @@ function state_(user) {
   }
   // แม่บ้านได้รับเฉพาะข้อมูลของชั้นตัวเอง (กรองที่ฝั่งเซิร์ฟเวอร์ ไม่ใช่แค่ซ่อนในหน้าจอ)
   return { ok: true, now: Date.now(), user: publicUser_(user), ver: r.ver, db: Core.scopeDb(out, user) };
+}
+
+// ประวัติการตรวจของวันที่เลือก (เฉพาะแอดมิน) พร้อมลายเซ็น — ใช้แสดงฟอร์มและดาวน์โหลดเป็นรูป
+// อ่านย้อนหลังได้ไกลกว่าข้อมูลหลัก (ที่โหลดแค่ 2 วันล่าสุด) แต่ไม่ล็อก ไม่เขียนชีต
+function history_(user, req) {
+  if (user.role !== 'admin') return { ok: false, code: 'FORBIDDEN', message: 'เฉพาะผู้ดูแลระบบ' };
+  var date = String(req.date || '');
+  if (!/^\d{4}-\d\d-\d\d$/.test(date)) date = Core.dateOf(Date.now());
+  var insp = readTable_('Inspections', HISTORY_TAIL.Inspections).filter(function (i) { return i.date === date; });
+  var ids = {};
+  insp.forEach(function (i) { ids[i.id] = 1; });
+  return {
+    ok: true, date: date, inspections: insp,
+    steps: readTable_('Steps', HISTORY_TAIL.Steps).filter(function (s) { return ids[s.inspectionId]; }),
+    issues: readTable_('Issues', HISTORY_TAIL.Issues).filter(function (x) { return ids[x.inspectionId]; })
+  };
 }
 
 function act_(user, req) {

@@ -248,3 +248,32 @@ button.rowline { background: none; border-left: 0; border-right: 0; border-botto
   .sheet.full { border-radius: 0; }
 }
 @media (prefers-reduced-motion: reduce) { #toast div { animation: none; } }
+
+/* ---------- ลายเซ็น ---------- */
+.dialog .signbox { max-width: 480px; }
+.signbox h3 { font-size: 19px; margin-bottom: 4px; }
+.signbox .signwho { font-size: 14px; color: var(--ink2); margin: 6px 0 10px; }
+.signbox .sub { margin-bottom: 0; }
+.sigframe { position: relative; border: 1.5px solid var(--line); border-radius: 12px; background: #fff; margin: 0 0 14px; overflow: hidden; }
+.sigframe::before { content: ''; position: absolute; left: 16px; right: 16px; bottom: 30px; border-top: 1.5px dashed var(--line); pointer-events: none; }
+.sigframe canvas { display: block; width: 100%; aspect-ratio: 8 / 3; touch-action: none; cursor: crosshair; }
+.sigline { position: absolute; left: 0; right: 0; bottom: 6px; text-align: center; color: var(--mute); font-size: 14px; pointer-events: none; }
+.signbox .acts .btn { padding: 0 10px; }
+.signbox .acts .btn[data-s=ok] { flex: 1.8; }
+
+/* ---------- ประวัติการตรวจ / ฟอร์ม (แอดมิน) ---------- */
+.icon-btn.dark { color: var(--ink); border-color: var(--line); background: #fff; }
+.icon-btn[disabled] { opacity: .4; pointer-events: none; }
+.histbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+.histbar input { min-height: 44px; border: 1.5px solid var(--line); border-radius: 12px; padding: 0 12px; font-size: 16px; background: #fff; }
+.histbar #histQ { flex: 1; min-width: 130px; }
+.hrow { padding: 12px 0; border-top: 1px solid var(--fog); }
+.hrow:first-child { border-top: 0; }
+.hmain { display: flex; gap: 12px; align-items: flex-start; }
+.hmain .rn { flex: none; width: 52px; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hmain .rt { flex: 1; min-width: 0; font-size: 15px; }
+.hmain .rt small { display: block; color: var(--mute); font-size: 13px; margin-top: 2px; }
+.hacts { display: flex; gap: 8px; margin: 10px 0 0 64px; }
+.hacts .btn { flex: 1; }
+.formview { background: #CBD5D4; padding: 12px; }
+.formcv { display: block; width: 100%; max-width: 820px; height: auto; margin: 0 auto; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,.28); }

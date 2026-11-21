@@ -1,6 +1,6 @@
 // Service worker แบบเบา: เปิดแอปได้แม้สัญญาณหลุด (network-first เพื่อไม่ให้ได้โค้ดเก่าค้าง)
-var CACHE = 'room-check-v5';
-var FILES = ['./', 'index.html', 'style.css', 'config.js', 'core.js', 'demo.js', 'api.js', 'app.js', 'manifest.json', 'icon.svg'];
+var CACHE = 'room-check-v6';
+var FILES = ['./', 'index.html', 'style.css', 'config.js', 'core.js', 'demo.js', 'api.js', 'form.js', 'form-header.png', 'app.js', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));

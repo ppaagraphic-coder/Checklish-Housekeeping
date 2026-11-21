@@ -208,6 +208,22 @@ var Api = (function () {
     },
     busy: function () { return inflight > 0; },
 
+    // ประวัติการตรวจของวันที่เลือก พร้อมลายเซ็น (เฉพาะแอดมิน) → { ok, date, inspections, steps, issues }
+    history: function (date) {
+      if (!live) {
+        var db = cache.db, ids = {};
+        var insp = db.inspections.filter(function (i) { return i.date === date; });
+        insp.forEach(function (i) { ids[i.id] = 1; });
+        return Promise.resolve({
+          ok: true, date: date, inspections: insp,
+          steps: db.steps.filter(function (x) { return ids[x.inspectionId]; }),
+          issues: db.issues.filter(function (x) { return ids[x.inspectionId]; })
+        });
+      }
+      return idle().then(function () { return call({ action: 'history', date: date, token: token }); })
+        .catch(function () { return { ok: false, offline: true, message: 'เชื่อมต่อไม่ได้ ตรวจสอบสัญญาณแล้วลองใหม่' }; });
+    },
+
     ping: function () {
       if (!live) return Promise.resolve({ ok: true, ver: '' });
       return call({ action: 'ping', token: token }).catch(function () { return { ok: false, offline: true }; });

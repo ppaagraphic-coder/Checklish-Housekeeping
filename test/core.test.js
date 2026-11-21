@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const Core = require('../docs/core.js');
 const Demo = require('../docs/demo.js');
 
+// ลายเซ็นตัวอย่าง (ต้องมีหมึกพอ ไม่งั้นระบบไม่รับ)
+const SIG = '320x120|20,80,60,30,100,90,150,25,210,95,290,40';
+
 const T0 = Date.UTC(2026, 10, 20, 2, 0, 0); // 20 พ.ย. 2026 09:00 เวลาไทย
 const min = (n) => n * 60000;
 
@@ -56,12 +59,12 @@ test('วงจรเต็ม: เช็กอิน → เช็กเอา�
   assert.equal(r.result.inspectionId, 'I-203-abc123');
   assert.equal(room(db, '203').status, 'inspecting');
   const id = active(db, '203').id;
-  ok('maid02', 'submitStep', { inspectionId: id, step: 1, failures: [] });
+  ok('maid02', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] });
   assert.equal(active(db, '203').step, 2);
-  ok('head', 'submitStep', { inspectionId: id, step: 2, failures: [] });
+  ok('head', 'submitStep', { signature: SIG, inspectionId: id, step: 2, failures: [] });
   assert.equal(active(db, '203').step, 3);
   assert.equal(room(db, '203').status, 'inspecting');
-  ok('front', 'submitStep', { inspectionId: id, step: 3, failures: [] });
+  ok('front', 'submitStep', { signature: SIG, inspectionId: id, step: 3, failures: [] });
   assert.equal(room(db, '203').status, 'ready');
   assert.equal(active(db, '203'), null);
   assert.equal(Core.inspOf(db, id).status, 'passed');
@@ -75,9 +78,9 @@ test('รอบการใช้ห้องใหม่: พักซ้ำแ
     ok('front', 'checkout', { roomId: '101' });
     ok('maid01', 'cleaned', { roomId: '101', idSeed: seed });
     const id = active(db, '101').id;
-    ok('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [] });
-    ok('head', 'submitStep', { inspectionId: id, step: 2, failures: [] });
-    ok('front', 'submitStep', { inspectionId: id, step: 3, failures: [] });
+    ok('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] });
+    ok('head', 'submitStep', { signature: SIG, inspectionId: id, step: 2, failures: [] });
+    ok('front', 'submitStep', { signature: SIG, inspectionId: id, step: 3, failures: [] });
   }
   const mine = db.inspections.filter((i) => i.roomId === '101');
   assert.equal(mine.length, 2);
@@ -92,7 +95,7 @@ test('สิทธิ์: แต่ละขั้นตรวจได้เฉ
   ok('maid01', 'cleaned', { roomId: '102' });
   const id = active(db, '102').id;
   for (const who of ['head', 'front', 'admin']) {
-    const r = run(who, 'submitStep', { inspectionId: id, step: 1, failures: [] });
+    const r = run(who, 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] });
     assert.equal(r.ok, false);
     assert.equal(r.code, 'FORBIDDEN');
   }
@@ -100,8 +103,8 @@ test('สิทธิ์: แต่ละขั้นตรวจได้เฉ
   assert.equal(run('maid01', 'checkout', { roomId: '101' }).code, 'FORBIDDEN');
   assert.equal(run('head', 'cleaned', { roomId: '102' }).code, 'FORBIDDEN');
   assert.equal(run('front', 'cancelInspection', { inspectionId: id }).code, 'FORBIDDEN');
-  ok('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [] });
-  assert.equal(run('maid01', 'submitStep', { inspectionId: id, step: 2, failures: [] }).code, 'FORBIDDEN');
+  ok('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] });
+  assert.equal(run('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 2, failures: [] }).code, 'FORBIDDEN');
 });
 
 test('กันส่งซ้ำ/ข้อมูลเก่า: step ไม่ตรงถูกปฏิเสธ และไม่แก้ข้อมูล', () => {
@@ -110,9 +113,9 @@ test('กันส่งซ้ำ/ข้อมูลเก่า: step ไม่
   ok('front', 'checkout', { roomId: '102' });
   ok('maid01', 'cleaned', { roomId: '102' });
   const id = active(db, '102').id;
-  ok('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [] });
+  ok('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] });
   const before = JSON.stringify(db);
-  const r = run('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [] });
+  const r = run('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] });
   assert.equal(r.ok, false);
   assert.equal(JSON.stringify(db), before);
 });
@@ -123,7 +126,7 @@ test('พบปัญหา: ห้อง = มีปัญหา, สร้า�
   ok('front', 'checkout', { roomId: '208' });
   ok('maid02', 'cleaned', { roomId: '208' });
   const id = active(db, '208').id;
-  const r = ok('maid02', 'submitStep', {
+  const r = ok('maid02', 'submitStep', { signature: SIG,
     inspectionId: id, step: 1,
     failures: [{ itemNo: 14, kind: 'missing', found: 2, note: 'หาย 2 ขวด' }, { itemNo: 9, kind: 'damaged', found: 1 }]
   });
@@ -137,8 +140,8 @@ test('พบปัญหา: ห้อง = มีปัญหา, สร้า�
   assert.deepEqual(r.notify[0].to, { role: 'maid', floor: 2 });
   assert.equal(r.notify[0].kind, 'issue');
   // ระหว่างแก้ ห้ามผ่านต่อ
-  assert.equal(run('head', 'submitStep', { inspectionId: id, step: 1, failures: [] }).ok, false);
-  assert.equal(run('maid02', 'submitStep', { inspectionId: id, failures: [] }).code, 'NEEDS_FIX');
+  assert.equal(run('head', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] }).ok, false);
+  assert.equal(run('maid02', 'submitStep', { signature: SIG, inspectionId: id, failures: [] }).code, 'NEEDS_FIX');
 });
 
 test('แก้แล้วตรวจซ้ำ: กลับขั้นเดิม เห็นเฉพาะรายการที่มีปัญหา แล้วผ่านต่อได้', () => {
@@ -147,8 +150,8 @@ test('แก้แล้วตรวจซ้ำ: กลับขั้นเด
   ok('front', 'checkout', { roomId: '304' });
   ok('maid03', 'cleaned', { roomId: '304' });
   const id = active(db, '304').id;
-  ok('maid03', 'submitStep', { inspectionId: id, step: 1, failures: [] });
-  ok('head', 'submitStep', { inspectionId: id, step: 2, failures: [{ itemNo: 7, kind: 'missing', found: 0 }] });
+  ok('maid03', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] });
+  ok('head', 'submitStep', { signature: SIG, inspectionId: id, step: 2, failures: [{ itemNo: 7, kind: 'missing', found: 0 }] });
   assert.equal(room(db, '304').status, 'issue');
   // งานของแม่บ้านต้องมี "แก้ไข" และของหัวหน้าต้องยังไม่มี
   assert.equal(Core.tasksFor(db, db.users.find((u) => u.id === 'maid03')).filter((t) => t.kind === 'fix').length, 1);
@@ -163,10 +166,10 @@ test('แก้แล้วตรวจซ้ำ: กลับขั้นเด
   const t = Core.tasksFor(db, db.users.find((u) => u.id === 'head'));
   assert.equal(t.length, 1);
   assert.equal(t[0].recheck, 1);
-  ok('head', 'submitStep', { inspectionId: id, step: 2, failures: [] });
+  ok('head', 'submitStep', { signature: SIG, inspectionId: id, step: 2, failures: [] });
   assert.equal(db.steps[db.steps.length - 1].mode, 'recheck');
   assert.equal(Core.inspOf(db, id).recheckItems, '');
-  ok('front', 'submitStep', { inspectionId: id, step: 3, failures: [] });
+  ok('front', 'submitStep', { signature: SIG, inspectionId: id, step: 3, failures: [] });
   assert.equal(room(db, '304').status, 'ready');
 });
 
@@ -176,9 +179,9 @@ test('ตรวจซ้ำแล้วยังไม่ผ่าน: วนก
   ok('front', 'checkout', { roomId: '101' });
   ok('maid01', 'cleaned', { roomId: '101' });
   const id = active(db, '101').id;
-  ok('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [{ itemNo: 8, kind: 'damaged', found: 0 }] });
+  ok('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [{ itemNo: 8, kind: 'damaged', found: 0 }] });
   ok('maid01', 'markFixed', { inspectionId: id });
-  ok('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [{ itemNo: 8, kind: 'damaged', found: 0 }] });
+  ok('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [{ itemNo: 8, kind: 'damaged', found: 0 }] });
   assert.equal(room(db, '101').status, 'issue');
   assert.equal(db.issues.length, 2);
   assert.equal(new Set(db.issues.map((x) => x.id)).size, 2);
@@ -222,9 +225,9 @@ test('ตรวจตามรอบ: เริ่มได้เฉพาะห
   assert.equal(run('head', 'startRoutine', { roomId: '101', round: 'morning' }).code, 'NOT_READY');
   // ผ่านครบแล้วเริ่มรอบเดิมอีกไม่ได้ แต่รอบบ่ายได้
   const id = active(db, '101').id;
-  ok('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [] });
-  ok('head', 'submitStep', { inspectionId: id, step: 2, failures: [] });
-  ok('front', 'submitStep', { inspectionId: id, step: 3, failures: [] });
+  ok('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] });
+  ok('head', 'submitStep', { signature: SIG, inspectionId: id, step: 2, failures: [] });
+  ok('front', 'submitStep', { signature: SIG, inspectionId: id, step: 3, failures: [] });
   assert.equal(run('head', 'startRoutine', { roomId: '101', round: 'morning' }).code, 'ALREADY_DONE');
   ok('head', 'startRoutine', { roomId: '101', round: 'afternoon' });
   assert.equal(run('head', 'startRoutine', { roomId: '104', round: 'night' }).code, 'BAD_ROUND');
@@ -235,13 +238,13 @@ test('ผ่านทั้งหมดที่เลือก (bulkPass): ผ�
   const { db, ok, run } = fresh();
   ok('head', 'startRoutineMany', { round: 'morning', roomIds: ['101', '102', '103'] });
   const ids = ['101', '102', '103'].map((r) => active(db, r).id);
-  for (const id of ids.slice(0, 2)) ok('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [] });
+  for (const id of ids.slice(0, 2)) ok('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] });
   // 103 ยังอยู่ขั้น 1 → ถูกข้าม
   const items = ids.map((id) => ({ inspectionId: id, step: 2 }));
-  const r = ok('head', 'bulkPass', { items });
+  const r = ok('head', 'bulkPass', { signature: SIG, items });
   assert.equal(r.result.passed.length, 2);
   assert.equal(r.result.skipped.length, 1);
-  assert.equal(run('maid01', 'bulkPass', { items: [{ inspectionId: ids[0], step: 3 }] }).result.passed.length, 0);
+  assert.equal(run('maid01', 'bulkPass', { signature: SIG, items: [{ inspectionId: ids[0], step: 3 }] }).result.passed.length, 0);
   assert.equal(Core.inspOf(db, ids[0]).step, 3);
 });
 
@@ -262,9 +265,9 @@ test('ตรวจข้อมูลรายการที่ ✗: ราย�
   const { db, ok, run } = fresh();
   ok('head', 'startRoutine', { roomId: '101', round: 'morning' });
   const id = active(db, '101').id;
-  assert.equal(run('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [{ itemNo: 99 }] }).code, 'BAD_ITEM');
+  assert.equal(run('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [{ itemNo: 99 }] }).code, 'BAD_ITEM');
   assert.equal(db.steps.length, 0);
-  ok('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [{ itemNo: 14, found: 99 }, { itemNo: 14, found: 0 }] });
+  ok('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [{ itemNo: 14, found: 99 }, { itemNo: 14, found: 0 }] });
   assert.equal(db.issues.length, 1);
   assert.equal(db.issues[0].found, 3);
 });
@@ -275,13 +278,11 @@ test('summary: นับสถานะ รอบ ห้องค้าง ร�
   assert.equal(Object.values(s.counts).reduce((a, b) => a + b, 0), 40);
   assert.equal(s.counts.occupied, 17);
   assert.ok(s.counts.dirty >= 3);
-  assert.equal(s.groups.morning.passed, 4);
-  assert.equal(s.groups.morning.open, 1);
   assert.ok(s.overdue.some((o) => o.roomId === '103' && o.waitingFor === 'reception'));
   assert.ok(s.overdue.some((o) => o.roomId === '205' && o.status === 'dirty'));
   assert.ok(!s.overdue.some((o) => o.roomId === '402')); // เพิ่งเช็กเอาท์ 8 นาที
   assert.equal(s.openIssues.length, 2);
-  assert.equal(s.topItems.length, 3);
+  assert.equal(s.topItems.length, 2);
 });
 
 test('โหมดทดลอง: สร้างได้ ทุกบทบาทมีงานให้ทำ', () => {
@@ -290,7 +291,7 @@ test('โหมดทดลอง: สร้างได้ ทุกบทบ�
   assert.ok(t('maid02').some((x) => x.kind === 'clean' && x.floor === 2));
   assert.ok(t('maid02').some((x) => x.kind === 'fix' && x.roomId === '208'));
   assert.ok(t('maid02').some((x) => x.kind === 'check' && x.roomId === '207'));
-  assert.deepEqual(t('head').map((x) => x.roomId).sort(), ['106', '304', '306']);
+  assert.deepEqual(t('head').map((x) => x.roomId).sort(), ['106', '306']);
   assert.deepEqual(t('front').map((x) => x.roomId), ['103']);
   assert.deepEqual(t('admin'), []);
 });
@@ -311,7 +312,7 @@ test('แม่บ้านทำได้เฉพาะชั้นของ�
   assert.equal(room(db, '203').status, 'dirty');
   ok('maid02', 'cleaned', { roomId: '203' });
   const id = active(db, '203').id;
-  assert.equal(run('maid01', 'submitStep', { inspectionId: id, step: 1, failures: [] }).code, 'FORBIDDEN');
+  assert.equal(run('maid01', 'submitStep', { signature: SIG, inspectionId: id, step: 1, failures: [] }).code, 'FORBIDDEN');
   assert.equal(run('maid01', 'startRoutine', { roomId: '205', round: 'morning' }).code, 'FORBIDDEN');
   ok('maid02', 'startRoutine', { roomId: '205', round: 'morning' });
   ok('head', 'startRoutine', { roomId: '305', round: 'morning' }); // หัวหน้าไม่จำกัดชั้น
@@ -353,4 +354,105 @@ test('แม่บ้านหลายชั้น (floors = "1,2") เห็�
   const u = db.users.find((x) => x.id === 'maid01');
   assert.deepEqual(Core.tasksFor(db, u).map((t) => t.roomId), ['203']);
   ok('maid01', 'cleaned', { roomId: '203' });
+});
+
+// ---------------------------------------------------------------------------
+// ลายเซ็น + ข้อมูลฟอร์ม
+// ---------------------------------------------------------------------------
+function startedInsp(f, roomId, maid) {
+  f.ok('front', 'checkin', { roomId });
+  f.ok('front', 'checkout', { roomId });
+  f.ok(maid, 'cleaned', { roomId, idSeed: 'sg' + roomId });
+  return active(f.db, roomId).id;
+}
+
+test('ลายเซ็น: ทุกขั้นตอนต้องเซ็น ไม่เซ็น/เซ็นไม่ถูกรูปแบบ/ขีดสั้นเกินไปจะไม่ผ่านและไม่แก้ข้อมูลเลย', () => {
+  const f = fresh();
+  const id = startedInsp(f, '201', 'maid02');
+  const bad = [undefined, '', 'abc', '320x120|10,10', '320x120|10,10,500,90', '320x120|10,10,50,60,100', '320x120||', 'x|1,2,3,4', 123];
+  bad.forEach((sig) => {
+    const r = f.run('maid02', 'submitStep', { inspectionId: id, step: 1, failures: [], signature: sig });
+    assert.equal(r.code, 'NEED_SIGN', String(sig));
+  });
+  assert.equal(f.db.steps.length, 0);
+  assert.equal(active(f.db, '201').step, 1);
+  // ขั้นที่พบปัญหาก็ต้องเซ็นเช่นกัน
+  assert.equal(f.run('maid02', 'submitStep', { inspectionId: id, step: 1, failures: [{ itemNo: 7 }] }).code, 'NEED_SIGN');
+  assert.equal(room(f.db, '201').status, 'inspecting');
+  // ยาวเกินกำหนดก็ไม่รับ (ลงเซลล์ Sheet ไม่ได้)
+  const huge = '320x120|' + Array.from({ length: 6000 }, () => '10,10').join(',');
+  assert.equal(f.run('maid02', 'submitStep', { inspectionId: id, step: 1, failures: [], signature: huge }).code, 'NEED_SIGN');
+});
+
+test('ลายเซ็น: เซ็นแล้วเก็บไว้กับผลตรวจของขั้นนั้น (ทั้งผ่านและพบปัญหา)', () => {
+  const f = fresh();
+  const id = startedInsp(f, '201', 'maid02');
+  f.ok('maid02', 'submitStep', { inspectionId: id, step: 1, failures: [{ itemNo: 7 }], signature: SIG });
+  assert.equal(f.db.steps.length, 1);
+  assert.equal(f.db.steps[0].signature, SIG);
+  assert.equal(f.db.steps[0].result, 'fail');
+  f.ok('maid02', 'markFixed', { inspectionId: id });
+  const SIG2 = '320x120|30,60,90,40,140,80,200,30';
+  f.ok('maid02', 'submitStep', { inspectionId: id, step: 1, failures: [], signature: SIG2 });
+  assert.equal(f.db.steps[1].signature, SIG2);
+  assert.equal(f.db.steps[1].mode, 'recheck');
+});
+
+test('ลายเซ็น: bulkPass ต้องเซ็น และลายเซ็นเดียวถูกบันทึกกับทุกห้องที่ผ่าน', () => {
+  const f = fresh();
+  const a = startedInsp(f, '101', 'maid01'), b = startedInsp(f, '102', 'maid01');
+  f.ok('maid01', 'submitStep', { inspectionId: a, step: 1, failures: [], signature: SIG });
+  f.ok('maid01', 'submitStep', { inspectionId: b, step: 1, failures: [], signature: SIG });
+  const items = [{ inspectionId: a, step: 2 }, { inspectionId: b, step: 2 }];
+  assert.equal(f.run('head', 'bulkPass', { items }).code, 'NEED_SIGN');
+  assert.equal(Core.inspOf(f.db, a).step, 2);
+  const HS = '320x120|20,20,80,90,150,30,220,85,300,35';
+  const r = f.ok('head', 'bulkPass', { items, signature: HS });
+  assert.equal(r.result.passed.length, 2);
+  const s2 = f.db.steps.filter((s) => s.step === 2);
+  assert.deepEqual(s2.map((s) => s.signature), [HS, HS]);
+});
+
+test('ลายเซ็น: parseSignature อ่านเส้นกลับมาได้ครบ', () => {
+  const p = Core.parseSignature('320x120|10,10,50,60|100,20');
+  assert.equal(p.w, 320); assert.equal(p.h, 120);
+  assert.deepEqual(p.strokes, [[[10, 10], [50, 60]], [[100, 20]]]);
+  assert.ok(p.length > 60);
+  assert.equal(Core.parseSignature('320x120|10,10,50'), null);
+});
+
+test('formData: ผลตรวจเรียงตามฟอร์มกระดาษ — ช่อง 1/2/3, ✓/✗, หมายเหตุ, ยอดรวม, ผู้เซ็น', () => {
+  const f = fresh();
+  const id = startedInsp(f, '201', 'maid02');
+  let fd = Core.formData(f.db, id);
+  assert.equal(fd.items.length, 25);
+  assert.deepEqual(fd.totals, [0, 0, 0]);
+  assert.deepEqual(fd.signers.map((s) => s.done), [false, false, false]);
+
+  f.ok('maid02', 'submitStep', { inspectionId: id, step: 1, signature: SIG, failures: [{ itemNo: 14, kind: 'missing', found: 2, note: 'แขกดื่มไป 2 ขวด' }] });
+  fd = Core.formData(f.db, id);
+  assert.equal(fd.items[13].marks[0], 'fail');
+  assert.match(fd.items[13].remark, /ขั้น 1 ขาด\/สูญหาย \(เหลือ 2\/4\) แขกดื่มไป 2 ขวด/);
+  assert.equal(fd.items[0].marks[0], 'ok');
+  assert.deepEqual(fd.totals, [24, 0, 0]);
+  assert.equal(fd.items[0].marks[1], null, 'ขั้นที่ยังไม่ตรวจเป็นช่องว่าง');
+  assert.equal(fd.signers[0].signature, SIG);
+  assert.equal(fd.signers[0].result, 'fail');
+
+  // แก้แล้วแต่ยังไม่ตรวจซ้ำ → ช่องของรายการนั้นว่าง (ยังไม่ยืนยัน)
+  f.ok('maid02', 'markFixed', { inspectionId: id });
+  fd = Core.formData(f.db, id);
+  assert.equal(fd.items[13].marks[0], null);
+  assert.match(fd.items[13].remark, /แก้ไขแล้ว/);
+  assert.deepEqual(fd.totals, [24, 0, 0]);
+
+  f.ok('maid02', 'submitStep', { inspectionId: id, step: 1, signature: SIG, failures: [] });
+  f.ok('head', 'submitStep', { inspectionId: id, step: 2, signature: SIG, failures: [] });
+  f.ok('front', 'submitStep', { inspectionId: id, step: 3, signature: SIG, failures: [] });
+  fd = Core.formData(f.db, id);
+  assert.deepEqual(fd.totals, [25, 25, 25]);
+  assert.equal(fd.status, 'passed');
+  assert.deepEqual(fd.signers.map((s) => s.userName), ['แม่บ้าน ชั้น 2', 'หัวหน้าแม่บ้าน', 'หัวหน้าฝ่ายต้อนรับ']);
+  assert.ok(fd.signers.every((s) => s.signature === SIG && s.done));
+  assert.equal(Core.formData(f.db, 'nope'), null);
 });

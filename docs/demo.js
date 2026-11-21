@@ -7,6 +7,20 @@ var Demo = (function () {
   'use strict';
   var C = (typeof Core !== 'undefined') ? Core : require('./core.js');
 
+  // ลายเซ็นจำลอง (เส้นหวัด ๆ สร้างจากชื่อผู้ใช้ ให้แต่ละคนต่างกัน) ใช้เฉพาะข้อมูลทดลอง
+  function sig(seed) {
+    var h = 7;
+    for (var i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+    function rnd() { h = (h * 1103515245 + 12345) >>> 0; return h / 4294967296; }
+    var strokes = [];
+    for (var s = 0; s < 2; s++) {
+      var pts = [], x = 18 + s * 150;
+      for (var k = 0; k < 14; k++) { pts.push(Math.round(Math.min(x, 312)), Math.round(25 + rnd() * 70)); x += 5 + rnd() * 6; }
+      strokes.push(pts.join(','));
+    }
+    return '320x120|' + strokes.join('|');
+  }
+
   function make(nowMs) {
     var db = C.seedDb();
     function user(id) { for (var i = 0; i < db.users.length; i++) if (db.users[i].id === id) return db.users[i]; }
@@ -21,7 +35,7 @@ var Demo = (function () {
       db.inspections.forEach(function (i) { if (i.roomId === roomId) found = i; });
       return found.id;
     }
-    function pass(uid, mins, roomId, step) { run(uid, mins, 'submitStep', { inspectionId: inspId(roomId), step: step, failures: [] }); }
+    function pass(uid, mins, roomId, step) { run(uid, mins, 'submitStep', { inspectionId: inspId(roomId), step: step, failures: [], signature: sig(uid) }); }
 
     // ห้องที่มีแขกพัก
     ['101', '102', '104', '105', '107', '201', '203', '204', '206', '301', '302', '305', '308', '401', '403', '501', '503']
@@ -67,28 +81,17 @@ var Demo = (function () {
     run('front', 60, 'checkout', { roomId: '208' });
     run('maid02', 40, 'cleaned', { roomId: '208', idSeed: 'd208' });
     run('maid02', 25, 'submitStep', {
-      inspectionId: inspId('208'), step: 1,
+      inspectionId: inspId('208'), step: 1, signature: sig('maid02'),
       failures: [
         { itemNo: 14, kind: 'missing', found: 2, note: 'แขกดื่มไป 2 ขวด' },
         { itemNo: 9, kind: 'damaged', found: 1, note: 'แก้วไวน์แตก 1 ใบ' }
       ]
     });
 
-    // ตรวจรอบเช้า: ผ่านแล้ว + กำลังตรวจซ้ำที่ขั้น 2
-    run('head', 200, 'startRoutineMany', { round: 'morning', roomIds: ['108', '406', '407', '408', '304'], idSeed: 'dm1' });
-    ['108', '406', '407', '408', '304'].forEach(function (r) {
-      pass('maid0' + r.charAt(0), 190, r, 1); // แม่บ้านของชั้นนั้น
-    });
-    ['108', '406', '407', '408'].forEach(function (r) { pass('head', 170, r, 2); pass('front', 150, r, 3); });
-    run('head', 120, 'submitStep', {
-      inspectionId: inspId('304'), step: 2, failures: [{ itemNo: 7, kind: 'missing', found: 0, note: 'ไม่พบรีโมททีวี' }]
-    });
-    run('maid03', 100, 'markFixed', { inspectionId: inspId('304') });
-
     return db;
   }
 
-  return { make: make };
+  return { make: make, sig: sig };
 })();
 
 if (typeof module !== 'undefined' && module.exports) { module.exports = Demo; }

@@ -55,7 +55,7 @@ var Core = (function () {
       num: ['step', 'failedStep']
     },
     Steps: {
-      cols: ['inspectionId', 'step', 'userId', 'userName', 'at', 'okCount', 'failCount', 'result', 'mode'],
+      cols: ['inspectionId', 'step', 'userId', 'userName', 'at', 'okCount', 'failCount', 'result', 'mode', 'signature'],
       num: ['step', 'okCount', 'failCount']
     },
     Issues: {
@@ -257,7 +257,37 @@ var Core = (function () {
     return res;
   }
 
-  function submitStepOne(db, ctx, inspectionId, expectStep, failuresIn, out) {
+  // ---------- ลายเซ็น ----------
+  // รูปแบบข้อความ: "WxH|x,y,x,y,...|x,y,..."  (ส่วนแรกคือขนาดผืนผ้าใบ ที่เหลือคือเส้นที่ลากทีละเส้น จุดเรียงเป็นคู่ x,y)
+  // เก็บเป็นเส้น (ไม่ใช่รูป) เพื่อให้เล็ก (ปกติ 1–3 KB) ลงเซลล์ Google Sheet ได้ และวาดซ้ำในฟอร์มได้คมทุกขนาด
+  var SIG_MAX = 20000;
+  function parseSignature(sig) {
+    if (typeof sig !== 'string' || sig.length > SIG_MAX) return null;
+    var parts = sig.split('|');
+    var m = /^(\d{2,4})x(\d{2,4})$/.exec(parts[0]);
+    if (!m || parts.length < 2) return null;
+    var w = +m[1], hh = +m[2], strokes = [], len = 0;
+    for (var i = 1; i < parts.length; i++) {
+      if (!/^\d{1,4}(,\d{1,4})+$/.test(parts[i])) return null;
+      var n = parts[i].split(',').map(Number);
+      if (n.length % 2) return null;
+      var pts = [];
+      for (var k = 0; k < n.length; k += 2) {
+        if (n[k] > w || n[k + 1] > hh) return null;
+        pts.push([n[k], n[k + 1]]);
+        if (k) len += Math.sqrt(Math.pow(n[k] - n[k - 2], 2) + Math.pow(n[k + 1] - n[k - 1], 2));
+      }
+      strokes.push(pts);
+    }
+    return { w: w, h: hh, strokes: strokes, length: len };
+  }
+  // ต้องมีหมึกพอสมควร (กันกดเซ็นเป็นจุดเดียว/ขีดสั้น ๆ)
+  function validSignature(sig) {
+    var p = parseSignature(sig);
+    return !!p && p.length >= 40;
+  }
+
+  function submitStepOne(db, ctx, inspectionId, expectStep, failuresIn, out, signature) {
     var insp = mustInsp(db, inspectionId);
     var room = mustRoom(db, insp.roomId);
     if (insp.status === 'fixing') throw err('NEEDS_FIX', 'ห้อง ' + room.id + ' มีรายการที่ต้องแก้ไขก่อน');
@@ -266,6 +296,7 @@ var Core = (function () {
     if (expectStep != null && Number(expectStep) !== step) throw err('STALE', 'ห้อง ' + room.id + ' ถูกส่งต่อไปขั้นอื่นแล้ว กรุณารีเฟรช');
     if (ctx.user.role !== STEP_ROLE[step]) throw err('FORBIDDEN', 'ขั้นที่ ' + step + ' เป็นหน้าที่ของ' + STEP_LABEL[step]);
     needFloor(ctx, room);
+    if (!validSignature(signature)) throw err('NEED_SIGN', 'กรุณาเซ็นชื่อยืนยันผลการตรวจก่อนส่ง');
     var fails = normFailures(db, failuresIn);
     var total = db.items.length;
     var recheck = recheckList(insp).length > 0;
@@ -274,7 +305,7 @@ var Core = (function () {
     var rec = {
       inspectionId: insp.id, step: step, userId: ctx.user.id, userName: ctx.user.name, at: now,
       okCount: total - fails.length, failCount: fails.length,
-      result: fails.length ? 'fail' : 'pass', mode: recheck ? 'recheck' : 'check'
+      result: fails.length ? 'fail' : 'pass', mode: recheck ? 'recheck' : 'check', signature: signature
     };
     db.steps.push(rec);
     put(out, 'Steps', rec);
@@ -324,16 +355,18 @@ var Core = (function () {
 
   // ส่งผลตรวจ 1 ขั้น — p.failures = [{itemNo, kind, found, note}] (ว่าง = ครบทุกรายการ)
   H.submitStep = function (db, ctx, p, out) {
-    out.result = submitStepOne(db, ctx, p.inspectionId, p.step, p.failures, out);
+    out.result = submitStepOne(db, ctx, p.inspectionId, p.step, p.failures, out, p.signature);
   };
 
   // ผ่านหลายห้องพร้อมกัน (ไม่มีรายการ ✗) — p.items = [{inspectionId, step}]
+  // ลายเซ็นเดียวใช้กับทุกห้องในชุด (ผู้ตรวจคนเดียวกัน เซ็นรับรองครั้งเดียว) แต่ถูกบันทึกในผลตรวจของแต่ละห้อง
   H.bulkPass = function (db, ctx, p, out) {
+    if (!validSignature(p.signature)) throw err('NEED_SIGN', 'กรุณาเซ็นชื่อยืนยันผลการตรวจก่อนส่ง');
     var passed = [], skipped = [];
     (p.items || []).forEach(function (it) {
       var msg = tryEach(function () {
         // ตรวจสิทธิ์ก่อนแตะข้อมูล (submitStepOne ตรวจให้อยู่แล้ว)
-        submitStepOne(db, ctx, it.inspectionId, it.step, [], out);
+        submitStepOne(db, ctx, it.inspectionId, it.step, [], out, p.signature);
         passed.push(it.inspectionId);
       });
       if (msg) skipped.push({ inspectionId: it.inspectionId, message: msg });
@@ -495,6 +528,54 @@ var Core = (function () {
     }).sort(function (a, b) { return b.count - a.count; }).slice(0, 8);
   }
 
+  // ---------- ข้อมูลสำหรับฟอร์มกระดาษ (หน้าตรวจเช็กรายการของใช้ภายในห้องพัก) ----------
+  // db ต้องมี items, inspections, steps, issues → คืนข้อมูลพร้อมวาดเป็นฟอร์ม
+  // ช่อง 1/2/3 = ผู้ตรวจคนที่ 1/2/3 (ขั้นตรวจที่ 1/2/3): ✓ ผ่าน, ✗ พบปัญหาที่ยังไม่แก้, ว่าง = ยังไม่ตรวจ/รอตรวจซ้ำ
+  function formData(db, inspectionId) {
+    var insp = inspOf(db, inspectionId);
+    if (!insp) return null;
+    var steps = db.steps.filter(function (s) { return s.inspectionId === inspectionId; });
+    var issues = db.issues.filter(function (x) { return x.inspectionId === inspectionId; });
+    var pending = insp.status === 'open' ? recheckList(insp) : [];
+    var last = {};
+    steps.forEach(function (s) { last[s.step] = s; });
+    var totals = [0, 0, 0];
+    var items = db.items.map(function (it) {
+      var no = Number(it.no), marks = [], remarks = [];
+      for (var n = 1; n <= 3; n++) {
+        var mark = null;
+        if (last[n]) {
+          var open = issues.some(function (x) { return Number(x.step) === n && Number(x.itemNo) === no && x.status === 'open'; });
+          if (open) mark = 'fail';
+          else if (Number(insp.step) === n && pending.indexOf(no) >= 0) mark = null;
+          else mark = 'ok';
+        }
+        if (mark === 'ok') totals[n - 1]++;
+        marks.push(mark);
+      }
+      issues.forEach(function (x) {
+        if (Number(x.itemNo) !== no) return;
+        var t = 'ขั้น ' + x.step + ' ' + (x.kind === 'damaged' ? 'ชำรุด' : 'ขาด/สูญหาย') + ' (เหลือ ' + x.found + '/' + x.expected + ')' + (x.note ? ' ' + x.note : '');
+        if (x.status === 'fixed') t += ' → แก้ไขแล้ว' + (x.fixedAt ? ' ' + String(x.fixedAt).slice(11, 16) : '');
+        remarks.push(t);
+      });
+      return { no: no, name: it.name, qty: Number(it.qty), marks: marks, remark: remarks.join(' | ') };
+    });
+    var signers = [1, 2, 3].map(function (n) {
+      var s = last[n];
+      return {
+        step: n, label: STEP_LABEL[n], done: !!s,
+        userName: s ? s.userName : '', at: s ? s.at : '', result: s ? s.result : '',
+        signature: s && s.signature ? String(s.signature) : ''
+      };
+    });
+    return {
+      inspectionId: insp.id, roomId: sid(insp.roomId), date: insp.date, type: insp.type, round: insp.round, status: insp.status, step: Number(insp.step), failedStep: Number(insp.failedStep) || 0,
+      startedAt: insp.startedAt, finishedAt: insp.finishedAt, note: insp.note,
+      items: items, totals: totals, total: items.length, signers: signers
+    };
+  }
+
   // ---------- ข้อมูลตั้งต้น ----------
   function seedItems() { return DEFAULT_ITEMS.map(function (x, i) { return { no: i + 1, name: x[0], qty: x[1] }; }); }
   function seedRooms(floors, perFloor) {
@@ -528,6 +609,7 @@ var Core = (function () {
     apply: apply, tasksFor: tasksFor, scopeDb: scopeDb, floorsOf: floorsOf, summary: summary, topItems: topItems,
     stamp: stamp, dateOf: dateOf, toMs: toMs, minutesSince: minutesSince, recheckList: recheckList,
     roomOf: roomOf, inspOf: inspOf, activeInspOf: activeInspOf,
+    parseSignature: parseSignature, validSignature: validSignature, formData: formData,
     seedItems: seedItems, seedRooms: seedRooms, seedUsers: seedUsers, seedDb: seedDb
   };
 })();

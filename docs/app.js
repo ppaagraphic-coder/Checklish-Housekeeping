@@ -7,7 +7,7 @@
   var ROLE = Core.ROLES;
   var STATUS = Core.ROOM_STATUS;
 
-  var S = { user: null, db: null, tab: '', sel: {}, pick: {}, round: 'morning', floorTab: null, seen: null, busy: false, offline: false };
+  var S = { user: null, db: null, tab: '', sel: {}, pick: {}, floorTab: null, seen: null, busy: false, offline: false, hist: null };
   var F = null; // สถานะฟอร์มตรวจที่เปิดอยู่
 
   // ---------- ตัวช่วย ----------
@@ -128,7 +128,7 @@
   function tabsFor(role) {
     if (role === 'admin') return [{ id: 'overview', label: 'ภาพรวม' }, { id: 'issues', label: 'ปัญหา' }, { id: 'history', label: 'ประวัติ' }];
     if (role === 'reception') return [{ id: 'tasks', label: 'ตรวจขั้นสุดท้าย' }, { id: 'rooms', label: 'ห้องพัก' }];
-    return [{ id: 'tasks', label: 'งานของฉัน' }, { id: 'routine', label: 'ตรวจตามรอบ' }, { id: 'rooms', label: 'ผังห้อง' }];
+    return [{ id: 'tasks', label: 'งานของฉัน' }, { id: 'rooms', label: 'ผังห้อง' }];
   }
 
   function render() {
@@ -157,7 +157,7 @@
     }).join('') + '</nav>';
     var view = noFloor
       ? '<h1 class="page-h">ยังไม่ได้กำหนดชั้น</h1>' + emptyHtml('บัญชีนี้ยังไม่มีชั้นที่รับผิดชอบ', 'แจ้งผู้ดูแลระบบให้ใส่เลขชั้นในชีต Users (คอลัมน์ floors)')
-      : { tasks: tasksView, routine: routineView, rooms: roomsView, overview: overviewView, issues: issuesView, history: historyView }[S.tab](tasks);
+      : { tasks: tasksView, rooms: roomsView, overview: overviewView, issues: issuesView, history: historyView }[S.tab](tasks);
     $('app').innerHTML = demo + top + nav + '<main class="main">' + view + '</main>' + extraBar(tasks);
     document.title = (tasks.length ? '(' + tasks.length + ') ' : '') + 'ตรวจห้องพัก';
     window.scrollTo(0, y);
@@ -167,10 +167,6 @@
     if (S.tab === 'tasks') {
       var n = Object.keys(S.sel).length;
       if (n) return '<div class="bulkbar"><span>เลือก ' + n + ' ห้อง</span><button class="btn ghost sm" data-act="clearSel">ล้าง</button><button class="btn sm" data-act="bulkPass">ผ่านทั้งหมดที่เลือก</button></div>';
-    }
-    if (S.tab === 'routine') {
-      var k = Object.keys(S.pick).length;
-      return '<div class="footer-act"><button class="btn" data-act="startRoutine"' + (k ? '' : ' disabled') + '>' + (k ? 'เริ่มตรวจ' + Core.ROUNDS[S.round] + ' ' + k + ' ห้อง' : 'เลือกห้องที่จะเริ่มตรวจ') + '</button></div>';
     }
     return '';
   }
@@ -254,25 +250,6 @@
     }).join('');
   }
 
-  // ---------- แท็บ: ตรวจตามรอบ ----------
-  function routineView() {
-    var today = Core.dateOf(Date.now()), done = {};
-    S.db.inspections.forEach(function (i) {
-      if (i.type === 'routine' && i.round === S.round && i.date === today && i.status !== 'cancelled') done[i.roomId] = true;
-    });
-    var floors = byFloor(S.db.rooms).map(function (g) {
-      var free = g.rooms.filter(function (r) { return r.status === 'ready' && !done[r.id]; });
-      return '<div class="floor"><h3 class="floor-h">ชั้น ' + g.floor + '<span class="sub">ว่างพร้อมตรวจ ' + free.length + ' ห้อง</span>' +
-        (free.length ? '<button class="link-btn" data-act="pickFloor" data-floor="' + g.floor + '">เลือกทั้งชั้น</button>' : '') + '</h3><div class="tags" style="--n:' + cols(g) + '">' +
-        g.rooms.map(function (r) {
-          var ok = r.status === 'ready' && !done[r.id];
-          return tagHtml(r, { act: 'pick', disabled: !ok, picked: !!S.pick[r.id], done: !!done[r.id], label: done[r.id] ? 'ตรวจแล้ว' : (r.status === 'ready' ? (S.pick[r.id] ? 'เลือกแล้ว' : 'ว่าง') : statusText(r)) });
-        }).join('') + '</div></div>';
-    }).join('');
-    return '<h1 class="page-h">ตรวจตามรอบ</h1><p class="sub">เฉพาะห้องว่างที่พร้อมขาย ห้องที่มีแขกพักระบบข้ามให้</p>' +
-      '<div style="margin:12px 0"><div class="seg" role="group" aria-label="รอบตรวจ"><button data-act="round" data-round="morning" aria-pressed="' + (S.round === 'morning') + '">รอบเช้า</button><button data-act="round" data-round="afternoon" aria-pressed="' + (S.round === 'afternoon') + '">รอบบ่าย</button></div></div>' + floors;
-  }
-
   // ---------- แท็บ: ผังห้อง / ห้องพัก ----------
   function roomsView() {
     var s = Core.summary(S.db, Date.now(), OVERDUE);
@@ -288,7 +265,7 @@
     var strip = ['ready', 'occupied', 'dirty', 'inspecting', 'issue'].map(function (k) {
       return '<span class="s-' + k + '" style="width:' + (s.counts[k] / total * 100) + '%"></span>';
     }).join('');
-    var rounds = [['checkout', 'ตรวจหลังแขกออก'], ['morning', 'ตรวจรอบเช้า'], ['afternoon', 'ตรวจรอบบ่าย']].map(function (r) {
+    var rounds = [['checkout', 'ตรวจหลังแขกออก']].map(function (r) {
       var g = s.groups[r[0]], t = g.total || 1;
       return '<div class="prog"><div class="prog-h"><b>' + r[1] + '</b><span>ผ่านแล้ว ' + g.passed + ' / ' + g.total + (g.fixing ? ' <span class="pill issue">มีปัญหา ' + g.fixing + '</span>' : '') + '</span></div>' +
         '<div class="bar"><span class="p" style="width:' + (g.passed / t * 100) + '%"></span><span class="o" style="width:' + (g.open / t * 100) + '%"></span><span class="f" style="width:' + (g.fixing / t * 100) + '%"></span></div></div>';
@@ -303,7 +280,7 @@
     }).join('') : '<p class="sub">ยังไม่มีรายการที่พบปัญหา</p>';
     return '<h1 class="page-h">ภาพรวมวันนี้</h1><div class="panel">' + '<div class="strip" role="img" aria-label="สัดส่วนสถานะห้อง">' + strip + '</div>' + legendHtml(s.counts) + '</div>' +
       '<div class="section"><h2>ผังห้อง<span class="sub">แตะห้องเพื่อดูรายละเอียด</span></h2>' + boardHtml() + '</div>' +
-      '<div class="section grid2"><div><h2>ความคืบหน้าแต่ละรอบ</h2><div class="panel">' + rounds + '</div></div>' +
+      '<div class="section grid2"><div><h2>ความคืบหน้าวันนี้</h2><div class="panel">' + rounds + '</div></div>' +
       '<div><h2>ห้องที่ค้างนานเกิน ' + OVERDUE + ' นาที</h2><div class="panel">' + overdue + '</div></div></div>' +
       '<div class="section"><h2>ของที่พบปัญหาบ่อย<span class="sub">ย้อนหลังตามข้อมูลที่โหลดมา</span></h2><div class="panel">' + top + '</div></div>';
   }
@@ -318,13 +295,74 @@
       (open.length ? open.map(row).join('') : '<p class="sub">ไม่มีรายการค้าง</p>') + '</div></div>' +
       '<div class="section"><h2>แก้ไขแล้วล่าสุด</h2><div class="panel">' + (fixed.length ? fixed.map(row).join('') : '<p class="sub">ยังไม่มี</p>') + '</div></div>';
   }
-  function historyView() {
-    var rows = S.db.steps.slice().reverse().slice(0, 80).map(function (s) {
-      var insp = Core.inspOf(S.db, s.inspectionId);
-      var res = s.result === 'pass' ? '<span class="pill ok">ผ่าน</span>' : '<span class="pill issue">พบ ' + s.failCount + ' รายการ</span>';
-      return '<button class="rowline" data-act="room" data-room="' + h(insp ? insp.roomId : '') + '"><span class="rn">' + h(insp ? insp.roomId : '-') + '</span><span class="rt">ขั้น ' + s.step + ' ' + h(Core.STEP_LABEL[s.step]) + (s.mode === 'recheck' ? ' (ตรวจซ้ำ)' : '') + '<small>' + h(s.userName) + ' เวลา ' + h(String(s.at).slice(5, 16)) + '</small></span><span class="rr">' + res + '</span></button>';
+  // ---------- ประวัติการตรวจ (แอดมิน): เลือกวัน → ดูฟอร์ม / ดาวน์โหลดเป็นรูป ----------
+  function histState() {
+    if (!S.hist) S.hist = { date: Core.dateOf(Date.now()), data: null, loading: false, err: '', q: '' };
+    return S.hist;
+  }
+  function loadHist() {
+    var st = histState(), d = st.date;
+    st.loading = true; st.err = ''; st.data = null;
+    render();
+    Api.history(d).then(function (r) {
+      if (!S.hist || S.hist.date !== d) return; // เปลี่ยนวันหรือออกจากระบบระหว่างโหลด
+      st.loading = false;
+      if (r.ok) st.data = r; else st.err = r.message || 'โหลดประวัติไม่สำเร็จ';
+      if (S.user && S.tab === 'history') render();
+    });
+  }
+  function histDb() {
+    var d = histState().data || { inspections: [], steps: [], issues: [] };
+    return { items: S.db.items, inspections: d.inspections, steps: d.steps, issues: d.issues };
+  }
+  var INSP_STATUS = { passed: ['ok', 'ผ่านครบ'], fixing: ['issue', 'รอแก้ไข'], open: ['warn', 'กำลังตรวจ'], cancelled: ['', 'ยกเลิก'] };
+  function histListHtml() {
+    var st = histState();
+    if (st.loading) return '<p class="sub">กำลังโหลด…</p>';
+    if (st.err) return '<p class="sub" style="color:var(--issue-ink)">' + h(st.err) + '</p>';
+    if (!st.data) return '';
+    var db = histDb(), q = String(st.q || '').trim();
+    var list = st.data.inspections.filter(function (i) { return !q || String(i.roomId).indexOf(q) >= 0; })
+      .sort(function (a, b) { return a.startedAt < b.startedAt ? 1 : -1; });
+    if (!list.length) return '<p class="sub">' + (q ? 'ไม่พบห้อง ' + h(q) : 'ไม่มีใบตรวจในวันนี้') + '</p>';
+    return list.map(function (i) {
+      var fd = Core.formData(db, i.id), stt = INSP_STATUS[i.status] || ['', i.status];
+      var who = fd.signers.filter(function (x) { return x.done; }).map(function (x) {
+        return 'ขั้น ' + x.step + ' ' + h(x.userName) + (x.signature ? ' ✍' : '');
+      }).join(' → ') || 'ยังไม่มีผลตรวจ';
+      var pill = '<span class="pill ' + stt[0] + '">' + stt[1] + (i.status === 'open' ? ' ขั้น ' + i.step : '') + '</span>';
+      return '<div class="hrow"><div class="hmain"><span class="rn">' + h(i.roomId) + '</span><div class="rt">' + h(typeLabel(i)) + ' ' + pill +
+        '<small>' + who + ' · เริ่ม ' + hhmm(i.startedAt) + ' น.</small></div></div>' +
+        '<div class="hacts"><button class="btn ghost sm" data-act="viewForm" data-insp="' + h(i.id) + '">ดูฟอร์ม</button>' +
+        '<button class="btn sm" data-act="dlForm" data-insp="' + h(i.id) + '">ดาวน์โหลดรูป</button></div></div>';
     }).join('');
-    return '<h1 class="page-h">ประวัติการตรวจล่าสุด</h1><p class="sub">แสดง 80 รายการล่าสุด ประวัติทั้งหมดอยู่ในชีต Steps และ Log ของ Google Sheet</p><div class="panel" style="margin-top:12px">' + (rows || '<p class="sub">ยังไม่มี</p>') + '</div>';
+  }
+  function historyView() {
+    var st = histState(), today = Core.dateOf(Date.now());
+    return '<h1 class="page-h">ประวัติการตรวจ</h1>' +
+      '<div class="histbar"><button class="icon-btn dark" data-act="histDay" data-d="-1" aria-label="วันก่อนหน้า">‹</button>' +
+      '<input type="date" id="histDate" value="' + h(st.date) + '" max="' + today + '" aria-label="วันที่ตรวจ">' +
+      '<button class="icon-btn dark" data-act="histDay" data-d="1" aria-label="วันถัดไป"' + (st.date >= today ? ' disabled' : '') + '>›</button>' +
+      '<input type="search" id="histQ" inputmode="numeric" placeholder="ค้นหาเลขห้อง" value="' + h(st.q) + '" aria-label="ค้นหาเลขห้อง">' +
+      '<button class="icon-btn dark" data-act="histReload" aria-label="โหลดใหม่">↻</button></div>' +
+      '<p class="sub">ใบตรวจของวันที่เลือก กด “ดูฟอร์ม” เพื่อดูแบบฟอร์มพร้อมลายเซ็น หรือ “ดาวน์โหลดรูป” เป็นไฟล์ PNG</p>' +
+      '<div class="panel" id="histList" style="margin-top:12px">' + histListHtml() + '</div>';
+  }
+  function openFormView(inspId) {
+    var fd = Core.formData(histDb(), inspId); if (!fd) return;
+    $('sheet').innerHTML = '<div class="overlay"><div class="sheet full" role="dialog" aria-modal="true"><div class="sheet-h"><h2>ฟอร์มตรวจห้อง ' + h(fd.roomId) +
+      '<small>' + h(FormImage.thaiDate(fd.date)) + ' · ' + h(typeLabel(fd)) + '</small></h2><button class="icon-btn" data-act="closeSheet" aria-label="ปิด">✕</button></div>' +
+      '<div class="sheet-body formview"><div id="fvBox"><p class="sub">กำลังสร้างรูปฟอร์ม…</p></div></div>' +
+      '<div class="sheet-foot"><button class="btn" data-act="dlForm" data-insp="' + h(inspId) + '">ดาวน์โหลดรูป (PNG)</button></div></div></div>';
+    FormImage.render(fd).then(function (cv) {
+      var box = $('fvBox'); if (!box) return;
+      cv.className = 'formcv'; cv.setAttribute('role', 'img'); cv.setAttribute('aria-label', 'ฟอร์มตรวจห้อง ' + fd.roomId);
+      box.innerHTML = ''; box.appendChild(cv);
+    });
+  }
+  function downloadForm(inspId) {
+    var fd = Core.formData(histDb(), inspId); if (!fd) return;
+    FormImage.download(fd).then(function () { toast('บันทึกรูปแล้ว: ' + FormImage.fileName(fd)); }, function () { toast('สร้างรูปไม่สำเร็จ', 'bad'); });
   }
 
   // ---------- แผ่นรายละเอียดห้อง ----------
@@ -359,6 +397,69 @@
   }
   function closeSheet() { $('sheet').innerHTML = ''; F = null; }
 
+  // ---------- ลายเซ็น (ทุกขั้นตอนการตรวจต้องเซ็นก่อนส่งผล) ----------
+  // เก็บเป็นเส้นในผืนผ้าใบ 320×120 → "320x120|x,y,x,y,...|..." (ดู Core.parseSignature) เล็กพอลงเซลล์ Google Sheet
+  var SIGW = 320, SIGH = 120, SIG_SAFE = 15000;
+  function encodeSig(strokes) { return SIGW + 'x' + SIGH + '|' + strokes.map(function (st) { return st.join(','); }).join('|'); }
+  function openSign(info) {
+    return new Promise(function (resolve) {
+      var strokes = [], cur = null, dlg = $('dialog');
+      dlg.innerHTML = '<div class="dialog" role="dialog" aria-modal="true" aria-label="เซ็นชื่อยืนยัน"><div class="box signbox">' +
+        '<h3>เซ็นชื่อยืนยันผลการตรวจ</h3><p class="sub">' + h(info.text) + '</p>' +
+        '<div class="signwho"><b>' + h(S.user.name) + '</b> · ' + h(ROLE[S.user.role]) + ' · ' + hhmm(Core.stamp(Date.now())) + ' น.</div>' +
+        '<div class="sigframe"><canvas id="sigCv" width="640" height="240" aria-label="ช่องเซ็นชื่อ เซ็นด้วยนิ้วหรือปากกา"></canvas><span class="sigline" id="sigHint">เซ็นชื่อในกรอบนี้</span></div>' +
+        '<div class="acts"><button class="btn ghost" data-s="cancel">ยกเลิก</button><button class="btn ghost" data-s="clear">ล้าง</button><button class="btn" data-s="ok" disabled>ยืนยัน ส่งผล</button></div></div></div>';
+      var cv = $('sigCv'), ctx = cv.getContext('2d'), okBtn = dlg.querySelector('[data-s=ok]');
+      function paint() {
+        ctx.setTransform(2, 0, 0, 2, 0, 0); ctx.clearRect(0, 0, SIGW, SIGH);
+        ctx.strokeStyle = '#13307a'; ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        strokes.forEach(function (st) {
+          ctx.beginPath(); ctx.moveTo(st[0], st[1]);
+          if (st.length === 2) ctx.lineTo(st[0] + 0.1, st[1]);
+          for (var i = 2; i < st.length; i += 2) ctx.lineTo(st[i], st[i + 1]);
+          ctx.stroke();
+        });
+      }
+      function pos(e) {
+        var r = cv.getBoundingClientRect();
+        return [Math.max(0, Math.min(SIGW, Math.round((e.clientX - r.left) / r.width * SIGW))), Math.max(0, Math.min(SIGH, Math.round((e.clientY - r.top) / r.height * SIGH)))];
+      }
+      function ready() { return Core.validSignature(encodeSig(strokes)); }
+      cv.addEventListener('pointerdown', function (e) {
+        e.preventDefault(); try { cv.setPointerCapture(e.pointerId); } catch (er) { /* ignore */ }
+        var p = pos(e); cur = [p[0], p[1]]; strokes.push(cur); $('sigHint').style.display = 'none'; paint();
+      });
+      cv.addEventListener('pointermove', function (e) {
+        if (!cur) return; e.preventDefault();
+        var p = pos(e), n = cur.length;
+        if (Math.abs(p[0] - cur[n - 2]) + Math.abs(p[1] - cur[n - 1]) < 2) return; // ข้ามจุดที่ใกล้กันมาก (ลดขนาดข้อมูล)
+        cur.push(p[0], p[1]); paint();
+      });
+      function up() { if (!cur) return; cur = null; okBtn.disabled = !ready(); }
+      cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+      dlg.onclick = function (e) {
+        var b = e.target.closest('[data-s]'); if (!b) return;
+        var a = b.getAttribute('data-s');
+        if (a === 'clear') { strokes = []; cur = null; okBtn.disabled = true; $('sigHint').style.display = ''; paint(); return; }
+        if (a === 'ok') {
+          var sig = encodeSig(strokes);
+          while (sig.length > SIG_SAFE) { // เส้นยาวผิดปกติ: ตัดจุดสลับ (คงจุดแรก/สุดท้าย) จนเล็กพอ
+            strokes = strokes.map(function (st) {
+              if (st.length <= 8) return st;
+              var o = [st[0], st[1]];
+              for (var i = 4; i < st.length - 2; i += 4) o.push(st[i], st[i + 1]);
+              o.push(st[st.length - 2], st[st.length - 1]); return o;
+            });
+            sig = encodeSig(strokes);
+          }
+          if (!Core.validSignature(sig)) return;
+          dlg.innerHTML = ''; dlg.onclick = null; resolve(sig); return;
+        }
+        dlg.innerHTML = ''; dlg.onclick = null; resolve(null);
+      };
+    });
+  }
+
   // ---------- ฟอร์มตรวจ 25 รายการ ----------
   function openForm(inspId) {
     var insp = Core.inspOf(S.db, inspId); if (!insp || insp.status !== 'open') { toast('ใบตรวจนี้ไม่ได้รอคุณแล้ว', 'bad'); refresh(false); return; }
@@ -388,10 +489,11 @@
       }
       return '<div class="it' + (fail ? ' fail' : '') + '"><button class="it-main" data-act="toggle" data-no="' + it.no + '" aria-pressed="' + !!fail + '"><span class="it-no">' + it.no + '</span><span class="it-name">' + h(it.name) + '<small>มาตรฐาน ' + qty + ' ชิ้น' + (p ? ' — ครั้งก่อน: ' + h(p.note || (p.kind === 'damaged' ? 'ชำรุด' : 'ขาด')) : '') + '</small></span><span class="mark">' + (fail ? '✗' : '✓') + '</span></button>' + more + '</div>';
     }).join('');
+    var signHint = '<p class="sub" style="margin-top:14px">เช็กครบแล้วกดปุ่มด้านล่าง จะมีช่องให้เซ็นชื่อยืนยันผลการตรวจก่อนส่ง</p>';
     var more = rc ? '<p style="margin-top:12px"><button class="link-btn" data-act="showAll">' + (F.showAll ? 'ซ่อนรายการอื่น' : 'ตรวจรายการอื่นด้วย') + '</button></p>' : '';
     var label = fails ? 'บันทึกพบปัญหา ' + fails + ' รายการ' : (step < 3 ? 'ผ่าน ส่งต่อให้' + Core.STEP_LABEL[step + 1] : 'ผ่าน ห้องพร้อมขาย');
     $('sheet').innerHTML = '<div class="overlay"><div class="sheet full" role="dialog" aria-modal="true"><div class="sheet-h"><h2>ห้อง ' + h(F.room) + '<small>ตรวจขั้นที่ ' + step + ' โดย' + h(Core.STEP_LABEL[step]) + (insp.type === 'checkout' ? ' (หลังแขกออก)' : ' (' + h(Core.ROUNDS[insp.round]) + ')') + '</small></h2><button class="icon-btn" data-act="closeForm" aria-label="ปิดโดยไม่บันทึก">✕</button></div>' +
-      '<div class="sheet-body">' + stepsBar + note + '<div class="items">' + list + '</div>' + more + '</div>' +
+      '<div class="sheet-body">' + stepsBar + note + '<div class="items">' + list + '</div>' + more + signHint + '</div>' +
       '<div class="sheet-foot"><span class="count' + (fails ? ' bad' : '') + '">' + (rc && !F.showAll ? 'ตรวจซ้ำ ' + F.recheck.length : 'ครบ ' + (items.length - fails) + '/' + items.length) + '</span>' +
       '<button class="btn' + (fails ? ' danger' : '') + '" data-act="submitForm"' + (S.busy ? ' disabled' : '') + '>' + h(label) + '</button></div></div></div>';
     var nb = document.querySelector('#sheet .sheet-body'); if (nb && keepScroll !== false) nb.scrollTop = y;
@@ -407,13 +509,17 @@
       return { itemNo: Number(k), kind: F.items[k].kind, found: F.items[k].found, note: F.items[k].note };
     });
     var step = F.step, room = F.room, inspId = F.inspId;
-    run('submitStep', { inspectionId: inspId, step: step, failures: failures }, function (res) {
-      closeSheet();
-      if (res.queued) return;
-      var r = res.result || {};
-      if (!r.passed) toast('ห้อง ' + room + ' บันทึกแล้ว แจ้งแม่บ้านให้แก้ไข ' + r.failCount + ' รายการ');
-      else if (step < 3) toast('ห้อง ' + room + ' ผ่านแล้ว ส่งต่อให้' + Core.STEP_LABEL[step + 1]);
-      else toast('ห้อง ' + room + ' ผ่านครบ พร้อมขายแล้ว');
+    // เช็กเสร็จแล้วต้องเซ็นชื่อยืนยันก่อนส่งทุกครั้ง (ทั้งผ่านและพบปัญหา)
+    openSign({ text: 'ห้อง ' + room + ' · ตรวจขั้นที่ ' + step + ' · ' + (failures.length ? 'พบปัญหา ' + failures.length + ' รายการ' : 'ครบทุกรายการ') }).then(function (sig) {
+      if (!sig) return;
+      run('submitStep', { inspectionId: inspId, step: step, failures: failures, signature: sig }, function (res) {
+        closeSheet();
+        if (res.queued) return;
+        var r = res.result || {};
+        if (!r.passed) toast('ห้อง ' + room + ' บันทึกแล้ว แจ้งแม่บ้านให้แก้ไข ' + r.failCount + ' รายการ');
+        else if (step < 3) toast('ห้อง ' + room + ' ผ่านแล้ว ส่งต่อให้' + Core.STEP_LABEL[step + 1]);
+        else toast('ห้อง ' + room + ' ผ่านครบ พร้อมขายแล้ว');
+      });
     });
   }
 
@@ -485,7 +591,7 @@
     });
   }
   function doLogout() {
-    Api.logout(); S.user = null; S.db = null; S.seen = null; S.sel = {}; S.pick = {}; S.tab = ''; S.floorTab = null; closeSheet();
+    Api.logout(); S.user = null; S.db = null; S.seen = null; S.sel = {}; S.pick = {}; S.tab = ''; S.floorTab = null; S.hist = null; closeSheet();
     if (Api.isLive) renderLogin(); else { Api.state().then(function () { renderLogin(); }); }
   }
 
@@ -495,7 +601,15 @@
     demoReset: function () { ask('เริ่มข้อมูลทดลองใหม่ทั้งหมดหรือไม่?', 'เริ่มใหม่').then(function (y) { if (y) { Api.demoReset(); S.seen = null; refresh(false); toast('เริ่มข้อมูลทดลองใหม่แล้ว'); } }); },
     reload: function () { refresh(true).then(function () { toast('ข้อมูลล่าสุดแล้ว'); }); },
     logout: function () { doLogout(); },
-    tab: function (el) { S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); },
+    tab: function (el) { S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); if (S.tab === 'history') loadHist(); },
+    histDay: function (el) {
+      var st = histState(), p = st.date.split('-').map(Number), today = Core.dateOf(Date.now());
+      var nd = new Date(Date.UTC(p[0], p[1] - 1, p[2] + Number(el.dataset.d))).toISOString().slice(0, 10);
+      if (nd > today) return; st.date = nd; loadHist();
+    },
+    histReload: function () { loadHist(); },
+    viewForm: function (el) { openFormView(el.dataset.insp); },
+    dlForm: function (el) { downloadForm(el.dataset.insp); },
     floorTab: function (el) { S.floorTab = el.dataset.floor === 'all' ? 'all' : Number(el.dataset.floor); render(); },
     sel: function (el) { var id = el.dataset.insp; if (S.sel[id]) delete S.sel[id]; else S.sel[id] = 1; render(); },
     selAll: function () { tabState().list.forEach(function (t) { if (t.kind === 'check' && !t.recheck) S.sel[t.inspectionId] = 1; }); render(); },
@@ -504,35 +618,20 @@
       var items = myTasks().filter(function (t) { return S.sel[t.inspectionId]; }).map(function (t) { return { inspectionId: t.inspectionId, step: t.step }; });
       ask('ยืนยันให้ ' + items.length + ' ห้องที่เลือกผ่านทั้งหมด (ครบทุกรายการ)?', 'ผ่านทั้งหมด').then(function (y) {
         if (!y) return;
-        run('bulkPass', { items: items }, function (res) {
-          S.sel = {};
-          if (res.queued) return;
-          var r = res.result;
-          toast('ผ่านแล้ว ' + r.passed.length + ' ห้อง' + (r.skipped.length ? ' ข้าม ' + r.skipped.length + ' ห้อง: ' + r.skipped[0].message : ''), r.skipped.length ? 'bad' : '');
+        openSign({ text: 'ผ่านทั้งหมด ' + items.length + ' ห้อง (ลายเซ็นนี้ใช้กับทุกห้องที่เลือก)' }).then(function (sig) {
+          if (!sig) return;
+          run('bulkPass', { items: items, signature: sig }, function (res) {
+            S.sel = {};
+            if (res.queued) return;
+            var r = res.result;
+            toast('ผ่านแล้ว ' + r.passed.length + ' ห้อง' + (r.skipped.length ? ' ข้าม ' + r.skipped.length + ' ห้อง: ' + r.skipped[0].message : ''), r.skipped.length ? 'bad' : '');
+          });
         });
       });
     },
     cleaned: function (el) { run('cleaned', { roomId: el.dataset.room, idSeed: Api.uid() }, function (res) { if (!res.queued) toast('ห้อง ' + el.dataset.room + ' ส่งตรวจแล้ว รอตรวจขั้นที่ 1'); }); },
     fixed: function (el) { run('markFixed', { inspectionId: el.dataset.insp }, function (res) { if (!res.queued) toast('ส่งตรวจซ้ำแล้ว'); }); },
     openForm: function (el) { openForm(el.dataset.insp); },
-    round: function (el) { S.round = el.dataset.round; S.pick = {}; render(); },
-    pick: function (el) { var r = el.dataset.room; if (S.pick[r]) delete S.pick[r]; else S.pick[r] = 1; render(); },
-    pickFloor: function (el) {
-      var f = Number(el.dataset.floor), today = Core.dateOf(Date.now()), done = {};
-      S.db.inspections.forEach(function (i) { if (i.type === 'routine' && i.round === S.round && i.date === today && i.status !== 'cancelled') done[i.roomId] = 1; });
-      S.db.rooms.forEach(function (r) { if (r.floor === f && r.status === 'ready' && !done[r.id]) S.pick[r.id] = 1; });
-      render();
-    },
-    startRoutine: function () {
-      var ids = Object.keys(S.pick), round = S.round;
-      run('startRoutineMany', { round: round, roomIds: ids, idSeed: Api.uid() }, function (res) {
-        S.pick = {};
-        if (res.queued) return;
-        var r = res.result;
-        toast('เริ่มตรวจ' + Core.ROUNDS[round] + ' ' + r.started.length + ' ห้อง ส่งให้แม่บ้านแล้ว' + (r.skipped.length ? ' (ข้าม ' + r.skipped.length + ' ห้อง)' : ''), r.skipped.length ? 'bad' : '');
-        if (S.user.role === 'maid') S.tab = 'tasks';
-      });
-    },
     room: function (el) { if (el.dataset.room) openRoom(el.dataset.room); },
     closeSheet: function (el, e) { if (e.target === el || el.tagName === 'BUTTON') closeSheet(); },
     checkin: function (el) {
@@ -581,9 +680,11 @@
     if (e.key === 'Escape' && $('sheet').innerHTML && !$('dialog').innerHTML) { if (F) ACT.closeForm(); else closeSheet(); }
   });
   document.addEventListener('change', function (e) {
+    if (e.target.id === 'histDate' && /^\d{4}-\d\d-\d\d$/.test(e.target.value) && e.target.value <= Core.dateOf(Date.now())) { histState().date = e.target.value; loadHist(); return; }
     if (e.target.matches('[data-change=switchUser]')) { S.user = Api.demoLogin(e.target.value); S.tab = ''; S.floorTab = null; S.seen = null; S.sel = {}; S.pick = {}; closeSheet(); refresh(false); }
   });
   document.addEventListener('input', function (e) {
+    if (e.target.id === 'histQ') { histState().q = e.target.value; var L = $('histList'); if (L) L.innerHTML = histListHtml(); return; }
     var n = e.target.getAttribute && e.target.getAttribute('data-note');
     if (n && F && F.items[n]) F.items[n].note = e.target.value;
   });
